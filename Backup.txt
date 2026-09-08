@@ -1,0 +1,82 @@
+Here is a complete guide on how data, Google Drive backups, and restoring data between your development laptop and your Windows 10 test desktop work.
+
+1. How to Add Data & Create a Backup on Your Laptop
+Step 1: Add Data
+You have two ways to add data:
+
+Option A — Through the App UI (Recommended for real tests):
+Start the app on your laptop:
+bash
+npm run dev
+Log in with the default credentials:
+Username: admin
+Password: admin123
+Navigate to Items, Production, or Customers in the sidebar to add entries.
+Option B — Using Seed Scripts (For instant test data): Run the test data generator in your terminal:
+bash
+node seed-test-data.js
+(This populates 100 items and 60 customers into your local database).
+Step 2: Connect Google Drive & Back Up
+In the app, open the Settings page from the sidebar.
+Under Google Drive Backup, click Connect.
+A browser tab will open asking you to sign in with your Google account and grant permissions.
+Once you see "Authentication successful", return to the app.
+Click Backup Now.
+The app saves your SQLite database as:
+text
+inventory-backup-YYYY-MM-DDTHH-mm-ss.sqlite
+(Note: The app also automatically triggers a backup every 6 hours and whenever you quit the application).
+2. How to Get the Data Back on Your Windows 10 Desktop (Restore)
+How the Data Architecture Works:
+The app is a local-first desktop app powered by an embedded SQLite database named inventory.db.
+
+On Windows, the database file lives in your Windows AppData folder:
+
+If running in development mode (npm run dev):
+text
+%APPDATA%\inventory-app\inventory.db
+If running the packaged installer (.exe):
+text
+%APPDATA%\Inventory System\inventory.db
+(You can quickly open this folder by pressing Win + R, typing %APPDATA%, and pressing Enter).
+
+Step-by-Step: Restoring the Google Drive Backup onto the Desktop
+Currently, the app has a Backup button, but does not yet have a built-in "Restore" button in the UI. You can restore your data manually in 1 minute:
+
+Download the Backup from Google Drive:
+
+On your Windows 10 desktop, open your web browser and go to Google Drive.
+Search for or locate your latest backup file: inventory-backup-YYYY-MM-DDTHH-mm-ss.sqlite
+Download it to your desktop.
+Close the Inventory App:
+
+Make sure the Inventory App is completely closed on the Windows 10 desktop so the database file is not locked.
+Rename the File:
+
+Rename the downloaded file from inventory-backup-....sqlite to:
+text
+inventory.db
+Copy into AppData:
+
+Press Win + R, type %APPDATA%, and press Enter.
+Open the Inventory System folder (or inventory-app if running in dev mode). (If the folder doesn't exist yet, open the app once so it creates it, then close it).
+Paste your inventory.db file here (replace the existing file if prompted).
+If you see inventory.db-wal or inventory.db-shm files in that folder, delete them so SQLite loads cleanly from inventory.db.
+Launch the App:
+
+Start the app on the Windows 10 desktop. All your items, customers, stock, and orders from your laptop will be there.
+3. ⚠️ Crucial Step for Windows 10 Desktop: License Activation
+The application has a built-in hardware-locked license system:
+
+When you run the app on the Windows 10 desktop for the first time, it will show an activation screen with a Machine ID (e.g. MACH-XXXXXXXXXX).
+Copy that Machine ID.
+On your development laptop, open the terminal in the project directory and run:
+bash
+node generate-key.js <PASTE_DESKTOP_MACHINE_ID_HERE>
+Copy the generated license key and paste it into the activation dialog on the Windows 10 desktop to activate the app.
+4. Would You Like a 1-Click "Restore" Feature in the App?
+Right now you have to manually copy the downloaded file into %APPDATA%. We can easily add a "Restore from Backup" feature in Settings:
+
+Restore from File: Click a button to select any downloaded .sqlite file and automatically restore it.
+Restore from Google Drive: List recent backups stored in your Google Drive and restore with one click.
+Let me know if you would like me to implement this in the code for you!

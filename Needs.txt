@@ -1,0 +1,5 @@
+
+re-add user
+node electron/seed-admin.js admin admin123
+
+

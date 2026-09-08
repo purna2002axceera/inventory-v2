@@ -1,0 +1,8 @@
+-- Add raw material cost breakdown columns to items table
+ALTER TABLE items ADD COLUMN cost_rexine REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN cost_labor REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN cost_emboss REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN cost_thread REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN cost_packing REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN cost_cover REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN cost_other REAL DEFAULT NULL;

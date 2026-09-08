@@ -1,0 +1,59 @@
+{
+  "name": "inventory-app",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:next": "cd renderer && npm run dev",
+    "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development nodemon --watch electron --exec \"electron .\"",
+    "dev": "concurrently \"npm:dev:next\" \"npm:dev:electron\"",
+    "build:next": "cd renderer && npm run build",
+    "build": "npm run build:next && electron-builder",
+    "build:mac": "npm run build:next && electron-builder --mac",
+    "build:win": "npm run build:next && electron-builder --win",
+    "clear-data": "node clear-data.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "nodemon": "^3.1.14",
+    "wait-on": "^8.0.3"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^16.4.7",
+    "electron-serve": "^3.0.1",
+    "google-auth-library": "^11.0.2",
+    "googleapis": "^178.0.0",
+    "node-machine-id": "^1.1.12"
+  },
+  "build": {
+    "appId": "com.inventory.app",
+    "productName": "Inventory System",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/out/**/*",
+      "package.json"
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": true
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.business"
+    }
+  }
+}

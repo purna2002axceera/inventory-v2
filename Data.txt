@@ -1,0 +1,2 @@
+node generate-key.js MACH-9815DF8B73 YOUR_MACHINE_ID
+node generate-key.js YOUR_MACHINE_ID

@@ -1,0 +1,46 @@
+name: Build macOS App (.dmg)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Root Dependencies
+        run: npm install
+
+      - name: Install Renderer Dependencies
+        run: |
+          cd renderer
+          npm install
+          cd ..
+
+      - name: Build Next.js Export
+        run: npm run build:next
+
+      - name: Build macOS Installer (.dmg)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac --publish never
+
+      - name: Upload Mac Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Inventory-System-Mac-DMG
+          path: |
+            dist/*.dmg
+            dist/*.zip
