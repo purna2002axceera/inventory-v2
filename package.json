@@ -40,6 +40,9 @@
       "renderer/out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      ".env"
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

@@ -1,4 +1,4 @@
-const client = process.env.NEXT_PUBLIC_CLIENT_NAME || 'impress';
+const client = process.env.NEXT_PUBLIC_CLIENT_NAME || 'nethu';
 
 export const config = {
   clientName: client,

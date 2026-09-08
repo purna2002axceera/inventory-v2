@@ -30,7 +30,22 @@ jobs:
           cd ..
 
       - name: Build Next.js Export
+        env:
+          NEXT_PUBLIC_CLIENT_NAME: ${{ vars.NEXT_PUBLIC_CLIENT_NAME || 'nethu' }}
         run: npm run build:next
+
+      - name: Create .env for packaging
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          touch .env
+          if [ -n "$GOOGLE_CLIENT_ID" ]; then
+            echo "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID" >> .env
+          fi
+          if [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+            echo "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET" >> .env
+          fi
 
       - name: Build macOS Installer (.dmg)
         env:
