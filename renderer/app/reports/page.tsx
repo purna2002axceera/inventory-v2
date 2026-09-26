@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
+import { callIpc, IpcError } from '@/lib/ipc-client';
 
 function ReportsPageContent() {
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined);
@@ -31,17 +32,17 @@ function ReportsPageContent() {
       };
 
       if (activeTab === 'stocks') {
-        const result = await window.electronAPI.reports.getStocks(params);
-        setStocksData(result.items ?? result);
+        const result = await callIpc(window.electronAPI.reports.getStocks(params));
+        setStocksData(result.items);
       } else if (activeTab === 'grns') {
-        const result = await window.electronAPI.reports.getGRNs(params);
-        setGrnsData(result.receipts ?? result);
+        const result = await callIpc(window.electronAPI.reports.getGRNs(params));
+        setGrnsData(result.receipts);
       } else if (activeTab === 'returns') {
-        const result = await window.electronAPI.reports.getReturns(params);
-        setReturnsData(result.returns ?? result);
+        const result = await callIpc(window.electronAPI.reports.getReturns(params));
+        setReturnsData(result.returns);
       }
     } catch (err) {
-      console.error(err);
+      toast.error(err instanceof IpcError ? err.message : 'Failed to load report.');
     } finally {
       setLoading(false);
     }
@@ -227,7 +228,7 @@ function ReportsPageContent() {
                           <ul className="list-disc list-inside text-sm text-muted-foreground">
                             {rn.items?.map((i: any) => (
                               <li key={i.rni_id}>
-                                <span className="font-medium text-foreground">{i.name}</span> x{i.quantity} ({i.condition})
+                                <span className="font-medium text-foreground">{i.name}</span> x{i.quantity} ({i.condition}{i.condition === 'DAMAGED' ? `, ${i.resolution === 'EXCHANGE' ? 'exchanged' : 'refunded'}` : ''})
                               </li>
                             ))}
                           </ul>

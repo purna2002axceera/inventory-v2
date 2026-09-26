@@ -128,9 +128,15 @@ export function useAsyncSearch<T extends Record<string, any>>({
     setTotal(0);
     cacheRef.current.clear();
     latestSearchRef.current = '';
-    initialFetchDone.current = false;
     if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
+
+    // Consumers that keep this hook mounted across dialog open/close cycles (rather than
+    // unmounting it) call reset() on close to clear stale options. The one-time mount fetch
+    // below only ever fires once per component lifetime, so without an explicit re-fetch here,
+    // the dropdown would stay empty forever after the first close — refetch now so fresh data
+    // is already in place by the time the dialog reopens.
+    doFetch('', 1, false);
+  }, [doFetch]);
 
   const reload = useCallback(() => {
     setPage(1);

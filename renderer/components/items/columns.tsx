@@ -15,9 +15,10 @@ import type { Item } from '@/lib/types';
 type ColumnActions = {
   onEdit: (item: Item) => void;
   onArchive: (item: Item) => void;
+  onAdjustStock: (item: Item) => void;
 };
 
-export function getColumns({ onEdit, onArchive }: ColumnActions): ColumnDef<Item>[] {
+export function getColumns({ onEdit, onArchive, onAdjustStock }: ColumnActions): ColumnDef<Item>[] {
   return [
     {
       accessorKey: 'sku',
@@ -102,6 +103,7 @@ export function getColumns({ onEdit, onArchive }: ColumnActions): ColumnDef<Item
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onEdit(item)}>Edit</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onAdjustStock(item)}>Adjust Stock</DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => onArchive(item)}
                 className="text-destructive focus:text-destructive"

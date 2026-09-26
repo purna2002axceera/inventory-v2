@@ -236,13 +236,14 @@ function registerProductionHandlers(ipcMain, getDb) {
       }
 
       return runTransaction(db, () => {
-        const batch = db.prepare('SELECT * FROM batches WHERE batch_id = ?').get(grn.batch_id);
+        // A batch's very first GRN (by grn_id) is always the one that created it —
+        // that's a fixed historical fact, unlike inferring "new batch" from the batch's
+        // current quantity_made/quantity_left, which breaks if GRNs are approved out of order.
+        const isBatchCreatingGrn =
+          db.prepare('SELECT MIN(grn_id) AS min_id FROM production_receipts WHERE batch_id = ?').get(grn.batch_id)
+            .min_id === grn.grn_id;
 
-        // quantity_made already includes this GRN's quantity if it was a brand-new batch
-        // (inserted that way in production:create). If it's a top-up on an existing batch,
-        // quantity_made does NOT yet include it — add it now.
-        const wasNewBatchAtCreation = batch.quantity_made === grn.quantity && batch.quantity_left === 0;
-        if (!wasNewBatchAtCreation) {
+        if (!isBatchCreatingGrn) {
           db.prepare('UPDATE batches SET quantity_made = quantity_made + ?, quantity_left = quantity_left + ? WHERE batch_id = ?').run(
             grn.quantity,
             grn.quantity,

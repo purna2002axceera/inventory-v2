@@ -195,13 +195,14 @@ export function SalesReportDialog({
                         <TableHead className="text-right">Total Revenue</TableHead>
                         <TableHead className="text-right">Total Cost</TableHead>
                         <TableHead className="text-right text-destructive">Damaged Loss</TableHead>
+                        <TableHead className="text-right text-destructive">Bad Debt Loss</TableHead>
                         <TableHead className="text-right">Profit</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {report.items.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                             No sales found in this period.
                           </TableCell>
                         </TableRow>
@@ -217,6 +218,7 @@ export function SalesReportDialog({
                             <TableCell className="text-right tabular-nums">Rs. {item.totalRevenue.toFixed(2)}</TableCell>
                             <TableCell className="text-right tabular-nums">Rs. {item.totalCost.toFixed(2)}</TableCell>
                             <TableCell className="text-right tabular-nums text-destructive">Rs. {item.damagedLoss.toFixed(2)}</TableCell>
+                            <TableCell className="text-right tabular-nums text-destructive">Rs. {item.badDebtLoss.toFixed(2)}</TableCell>
                             <TableCell className={`text-right tabular-nums font-medium ${item.profit < 0 ? 'text-destructive' : 'text-emerald-600 print:text-black'}`}>
                               Rs. {item.profit.toFixed(2)}
                             </TableCell>
@@ -227,7 +229,7 @@ export function SalesReportDialog({
                   </Table>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4 mt-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
                   <div className="p-4 border rounded-lg bg-muted/50 print:bg-transparent print:border-2">
                     <div className="text-sm text-muted-foreground mb-1">Total Sales Revenue</div>
                     <div className="text-2xl font-bold tabular-nums">Rs. {report.totalSales.toFixed(2)}</div>
@@ -235,6 +237,10 @@ export function SalesReportDialog({
                   <div className="p-4 border rounded-lg bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900 print:bg-transparent print:border-2 print:border-gray-200">
                     <div className="text-sm text-red-600 dark:text-red-400 mb-1">Total Damaged Loss</div>
                     <div className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">Rs. {report.totalDamagedLoss.toFixed(2)}</div>
+                  </div>
+                  <div className="p-4 border rounded-lg bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900 print:bg-transparent print:border-2 print:border-gray-200">
+                    <div className="text-sm text-red-600 dark:text-red-400 mb-1">Total Bad Debt Loss</div>
+                    <div className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">Rs. {report.totalBadDebtLoss.toFixed(2)}</div>
                   </div>
                   <div className="p-4 border rounded-lg bg-muted/50 print:bg-transparent print:border-2">
                     <div className="text-sm text-muted-foreground mb-1">Total Profit</div>

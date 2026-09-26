@@ -3,3 +3,27 @@ re-add user
 node electron/seed-admin.js admin admin123
 
 
+npm run clear-data
+
+
+# Future
+
+📋 Inventory App — Deferred Update Trigger
+
+Status: feature freeze — stabilizing for pending client rollout, no major new features right now.
+
+When you paste this note, it means: all pending clients are now onboarded — start the deferred backend update.
+
+Scope of "the update," in order:
+
+Swap node:sqlite → better-sqlite3 in electron/db/connection.js (driver swap only, no schema/data changes, safe against every client's already-populated database).
+Revisit money-as-REAL vs. integer-cents — only if rounding issues have actually shown up in a report by then; otherwise still not worth the migration.
+Pricing change for the product — details TBD when we get here, ask me for specifics.
+Go straight into implementing #1 first unless told otherwise.
+
+Two notes on how I've set this up:
+
+I split it into four memory entries rather than one blob — rollout timing, the node:sqlite technical detail, your general preference for scoped/verified fixes with schema-impact flagged upfront, and the business context (multi-client product, friend doing data entry for this client) — so each stays accurate and useful on its own rather than one memory going stale and taking the rest down with it.
+Memory alone would already make me pick this up next time you mention it — the pasted note is really a manual override for "start now," which is fine to keep as a deliberate trigger you control.
+
+npm run build:win

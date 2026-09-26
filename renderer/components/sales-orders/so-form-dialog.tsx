@@ -22,6 +22,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import { callIpc, IpcError } from '@/lib/ipc-client';
 import type { Customer, Item } from '@/lib/types';
@@ -31,6 +32,8 @@ import { AsyncCombobox } from '@/components/ui/async-combobox';
 const soSchema = z.object({
   customerId: z.string().min(1, 'Customer is required'),
   orderDate: z.string().min(1, 'Order date is required').refine((d) => d <= new Date().toISOString().slice(0, 10), { message: 'Order date cannot be in the future' }),
+  paymentType: z.enum(['CASH', 'CREDIT']).default('CASH'),
+  creditDueDate: z.string().optional(),
   lines: z
     .array(
       z.object({
@@ -51,6 +54,9 @@ const soSchema = z.object({
       }
     }
   });
+  if (data.paymentType === 'CREDIT' && !data.creditDueDate) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Due date is required for credit sales', path: ['creditDueDate'] });
+  }
 });
 
 type SoFormValues = z.infer<typeof soSchema>;
@@ -100,14 +106,35 @@ export function SoFormDialog({
 
   const form = useForm<SoFormValues>({
     resolver: zodResolver(soSchema) as any,
-    defaultValues: { customerId: '', orderDate: todayIso(), lines: [{ itemId: '', batchId: 'AUTO', quantity: 1 }] },
+    defaultValues: { customerId: '', orderDate: todayIso(), paymentType: 'CASH', creditDueDate: '', lines: [{ itemId: '', batchId: 'AUTO', quantity: 1 }] },
   });
 
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'lines' });
 
+  const selectedCustomerId = form.watch('customerId');
+  const selectedCustomer = selectedCustomerId ? customerSearch.getById(selectedCustomerId) : undefined;
+  const paymentType = form.watch('paymentType');
+  const watchedLines = form.watch('lines');
+
+  // Non-credit customers can't have a credit order left dangling — force back to cash.
+  useEffect(() => {
+    if (!selectedCustomer?.credit_enabled && paymentType === 'CREDIT') {
+      form.setValue('paymentType', 'CASH');
+      form.setValue('creditDueDate', '');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustomerId]);
+
+  const grandTotal = watchedLines.reduce((sum, l) => {
+    const item = l.itemId ? itemSearch.getById(l.itemId) : undefined;
+    return sum + (item ? item.unit_price * (Number(l.quantity) || 0) : 0);
+  }, 0);
+  const availableCredit = selectedCustomer ? selectedCustomer.credit_limit - selectedCustomer.credit_used : 0;
+  const exceedsCredit = paymentType === 'CREDIT' && selectedCustomer ? grandTotal > availableCredit + 0.005 : false;
+
   useEffect(() => {
     if (open) {
-      form.reset({ customerId: '', orderDate: todayIso(), lines: [{ itemId: '', batchId: 'AUTO', quantity: 1 }] });
+      form.reset({ customerId: '', orderDate: todayIso(), paymentType: 'CASH', creditDueDate: '', lines: [{ itemId: '', batchId: 'AUTO', quantity: 1 }] });
     } else {
       customerSearch.reset();
       itemSearch.reset();
@@ -146,6 +173,8 @@ export function SoFormDialog({
         window.electronAPI.salesOrders.create({
           customerId: Number(values.customerId),
           orderDate: values.orderDate,
+          paymentType: values.paymentType,
+          creditDueDate: values.paymentType === 'CREDIT' ? values.creditDueDate : undefined,
           lines: values.lines.map((l) => ({
             itemId: Number(l.itemId),
             batchId: l.batchId && l.batchId !== 'AUTO' ? Number(l.batchId) : undefined,
@@ -168,7 +197,21 @@ export function SoFormDialog({
           <DialogTitle>New Sales Order</DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form
+            onSubmit={form.handleSubmit(onSubmit, () => {
+              // On validation failure, scroll the first error into view
+              setTimeout(() => {
+                const formEl = document.querySelector('[data-so-form]');
+                const firstError = formEl?.querySelector('[data-slot="form-message"]');
+                if (firstError) {
+                  firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }, 50);
+            })}
+            className="flex flex-col gap-4"
+            data-so-form
+          >
+            {/* Fixed top section: customer + date */}
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -182,10 +225,13 @@ export function SoFormDialog({
                         value={field.value}
                         onSelect={(id) => field.onChange(id)}
                         getId={(c) => String(c.customer_id)}
-                        renderOption={(c) => <>{c.name} {c.phone && `(${c.phone})`}</>}
+                        renderOption={(c) => {
+                          const details = [c.address, c.phone].filter(Boolean).join(' • ');
+                          return <>{c.name} {details && `(${details})`}</>;
+                        }}
                         renderSelected={(c) => c.name}
                         placeholder="Select a customer"
-                        searchPlaceholder="Search customer by name or phone..."
+                        searchPlaceholder="Search by name, address or phone..."
                         emptyText="No customer found."
                       />
                     </FormControl>
@@ -208,7 +254,60 @@ export function SoFormDialog({
               />
             </div>
 
-            <div className="space-y-3">
+            {selectedCustomer?.credit_enabled === 1 && (
+              <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="paymentType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Payment</FormLabel>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="CASH">Cash</SelectItem>
+                            <SelectItem value="CREDIT">Credit</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  {paymentType === 'CREDIT' && (
+                    <FormField
+                      control={form.control}
+                      name="creditDueDate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Due Date</FormLabel>
+                          <FormControl>
+                            <Input type="date" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Available credit: Rs. {availableCredit.toFixed(2)} of Rs. {selectedCustomer.credit_limit.toFixed(2)} limit
+                  (Rs. {selectedCustomer.credit_used.toFixed(2)} already owed)
+                </p>
+                {exceedsCredit && (
+                  <p className="text-xs text-destructive">
+                    This order (Rs. {grandTotal.toFixed(2)}) exceeds {selectedCustomer.name}'s available credit (Rs. {availableCredit.toFixed(2)} left).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Scrollable order lines area */}
+            <div className="space-y-3 overflow-y-auto max-h-[45vh] pr-1">
               <FormLabel>Order Lines</FormLabel>
               {fields.map((field, index) => {
                 const selectedItemId = form.watch(`lines.${index}.itemId`);
@@ -286,7 +385,8 @@ export function SoFormDialog({
               </Button>
             </div>
 
-            <DialogFooter>
+            {/* Sticky footer — always visible */}
+            <DialogFooter className="border-t pt-4">
               <Button type="submit" disabled={form.formState.isSubmitting}>
                 Create Order
               </Button>

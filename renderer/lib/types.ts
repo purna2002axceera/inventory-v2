@@ -34,6 +34,18 @@ export interface Item {
   cost_other: number | null;
 }
 
+export interface StockAdjustment {
+  ledger_id: number;
+  quantity_change: number;
+  resulting_stock: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface StockAdjustmentsListResult {
+  adjustments: StockAdjustment[];
+}
+
 export const SRI_LANKA_DISTRICTS = [
   'Ampara',
   'Anuradhapura',
@@ -106,6 +118,10 @@ export interface Customer {
   created_at: string;
   sales_order_count: number;
   return_note_count: number;
+  credit_enabled: number;
+  credit_limit: number;
+  credit_used: number;
+  total_written_off: number;
 }
 
 export interface CustomersListResult {
@@ -114,6 +130,8 @@ export interface CustomersListResult {
   page: number;
   pageSize: number;
 }
+
+export type CreditStatus = 'PENDING_PAYMENT' | 'PAID' | 'WRITTEN_OFF';
 
 export interface SalesOrder {
   so_id: number;
@@ -124,6 +142,42 @@ export interface SalesOrder {
   status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
   created_at: string;
   total_amount: number;
+  payment_type: 'CASH' | 'CREDIT';
+  credit_status: CreditStatus | null;
+  credit_due_date: string | null;
+  written_off_amount: number | null;
+  written_off_at: string | null;
+  written_off_note: string | null;
+}
+
+export interface CreditPayment {
+  payment_id: number;
+  so_id: number;
+  amount: number;
+  payment_date: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface CreditHistoryOrder {
+  so_id: number;
+  so_number: string;
+  order_date: string;
+  credit_status: CreditStatus;
+  credit_due_date: string | null;
+  written_off_amount: number | null;
+  written_off_at: string | null;
+  written_off_note: string | null;
+  total_amount: number;
+  paid_amount: number;
+  outstanding: number;
+  refundDue: number;
+}
+
+export interface CreditHistoryResult {
+  customerName: string;
+  totalWrittenOff: number;
+  orders: CreditHistoryOrder[];
 }
 
 export interface SalesOrdersListResult {
@@ -161,6 +215,7 @@ export interface SalesReportItem {
   latestUnitCost: number;
   totalCost: number;
   damagedLoss: number;
+  badDebtLoss: number;
   profit: number;
 }
 
@@ -172,6 +227,7 @@ export interface SalesReportResult {
   totalSales: number;
   totalProfit: number;
   totalDamagedLoss: number;
+  totalBadDebtLoss: number;
 }
 
 export interface DetailedSalesReportOrderLine {
@@ -202,6 +258,7 @@ export interface DetailedSalesReportResult {
 export type ReturnType = 'INTERNAL' | 'CUSTOMER';
 export type ReturnStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export type ReturnCondition = 'RESALABLE' | 'DAMAGED';
+export type ReturnResolution = 'REFUND' | 'EXCHANGE';
 
 export interface ReturnNote {
   return_id: number;
@@ -222,6 +279,7 @@ export interface ReturnNote {
 export interface ReturnNoteDetail extends ReturnNote {
   customer_name: string | null;
   items: ReturnNoteItem[];
+  totalRefund: number | null;
 }
 
 export interface ReturnNoteItem {
@@ -232,6 +290,8 @@ export interface ReturnNoteItem {
   item_sku: string;
   quantity: number;
   condition: ReturnCondition;
+  resolution: ReturnResolution | null;
+  unit_price: number | null;
 }
 
 export interface ReturnNotesListResult {
@@ -250,6 +310,7 @@ export interface ReturnableItem {
   pendingReturn: number;
   maxReturnable: number;
   unitPrice: number;
+  stockCount: number;
 }
 
 export interface ReturnableItemsResult {
@@ -258,4 +319,74 @@ export interface ReturnableItemsResult {
   customerName: string;
   orderDate?: string;
   items: ReturnableItem[];
+}
+
+export interface StockReportItem {
+  item_id: number;
+  sku: string;
+  name: string;
+  bike_model: string;
+  type: ItemType;
+  stock_count: number;
+  stock_in: number;
+  stock_out: number;
+}
+
+export interface StocksReportResult {
+  items: StockReportItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface GrnReportRow {
+  grn_id: number;
+  grn_number: string;
+  quantity: number;
+  received_date: string;
+  notes: string | null;
+  created_at: string;
+  sku: string;
+  item_name: string;
+  bike_model: string;
+  batch_ref: string | null;
+  production_date: string;
+}
+
+export interface GRNsReportResult {
+  receipts: GrnReportRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ReturnReportItem {
+  rni_id: number;
+  return_id: number;
+  item_id: number;
+  quantity: number;
+  condition: ReturnCondition;
+  resolution: ReturnResolution | null;
+  name: string;
+  sku: string;
+  bike_model: string;
+}
+
+export interface ReturnReportRow {
+  return_id: number;
+  return_number: string;
+  type: ReturnType;
+  return_date: string;
+  reason: string | null;
+  status: ReturnStatus;
+  created_at: string;
+  so_number: string | null;
+  items: ReturnReportItem[];
+}
+
+export interface ReturnsReportResult {
+  returns: ReturnReportRow[];
+  total: number;
+  page: number;
+  pageSize: number;
 }

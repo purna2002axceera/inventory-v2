@@ -45,11 +45,18 @@ const internalSchema = z.object({
 type InternalFormValues = z.infer<typeof internalSchema>;
 
 // --- Customer Return schema ---
-const customerLineSchema = z.object({
-  itemId: z.string().min(1, 'Item is required'),
-  quantity: z.coerce.number().int('Must be a whole number').min(0, 'Cannot be negative'),
-  condition: z.enum(['RESALABLE', 'DAMAGED'], { message: 'Select condition' }),
-});
+const customerLineSchema = z
+  .object({
+    itemId: z.string().min(1, 'Item is required'),
+    quantity: z.coerce.number().int('Must be a whole number').min(0, 'Cannot be negative'),
+    condition: z.enum(['RESALABLE', 'DAMAGED'], { message: 'Select condition' }),
+    resolution: z.enum(['REFUND', 'EXCHANGE']).optional(),
+  })
+  .superRefine((line, ctx) => {
+    if (line.quantity > 0 && line.condition === 'DAMAGED' && !line.resolution) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose refund or exchange', path: ['resolution'] });
+    }
+  });
 
 const customerSchema = z.object({
   soNumber: z.string().min(1, 'Sales order number is required'),
@@ -301,6 +308,15 @@ function CustomerReturnForm({ onClose, onSaved }: { onClose: () => void; onSaved
     defaultValues: { soNumber: '', returnDate: todayIso(), reason: '', items: [] },
   });
   const { fields, replace } = useFieldArray({ control: form.control, name: 'items' });
+  const watchedItems = form.watch('items');
+
+  // Refund total: RESALABLE and DAMAGED+REFUND lines pay cash back; EXCHANGE lines don't.
+  const totalRefund = watchedItems.reduce((sum, item, index) => {
+    const ri = returnableItems[index];
+    if (!ri || !item.quantity) return sum;
+    const isRefund = item.condition === 'RESALABLE' || (item.condition === 'DAMAGED' && item.resolution === 'REFUND');
+    return isRefund ? sum + item.quantity * ri.unitPrice : sum;
+  }, 0);
 
   async function loadReturnableItems(soNumber: string) {
     if (!soNumber.trim()) return;
@@ -348,6 +364,7 @@ function CustomerReturnForm({ onClose, onSaved }: { onClose: () => void; onSaved
         itemId: Number(item.itemId),
         quantity: item.quantity,
         condition: item.condition as 'RESALABLE' | 'DAMAGED',
+        resolution: item.condition === 'DAMAGED' ? (item.resolution as 'REFUND' | 'EXCHANGE') : undefined,
       }));
 
     if (returnItems.length === 0) {
@@ -492,7 +509,13 @@ function CustomerReturnForm({ onClose, onSaved }: { onClose: () => void; onSaved
                         <FormItem className="flex-1">
                           <FormLabel className="text-xs">Condition</FormLabel>
                           <RadioGroup
-                            onValueChange={field.onChange}
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              // Resolution only applies to DAMAGED; clear it when switching back to RESALABLE.
+                              if (value === 'RESALABLE') {
+                                form.setValue(`items.${index}.resolution`, undefined);
+                              }
+                            }}
                             value={field.value}
                             className="flex gap-4 mt-1"
                           >
@@ -514,9 +537,69 @@ function CustomerReturnForm({ onClose, onSaved }: { onClose: () => void; onSaved
                       )}
                     />
                   </div>
+
+                  {watchedItems[index]?.condition === 'DAMAGED' && (
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.resolution`}
+                      render={({ field }) => {
+                        const qty = watchedItems[index]?.quantity || 0;
+                        const insufficientStock = field.value === 'EXCHANGE' && qty > ri.stockCount;
+                        return (
+                          <FormItem className="rounded-md bg-muted/30 p-2">
+                            <FormLabel className="text-xs">Resolution</FormLabel>
+                            <RadioGroup
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              className="flex gap-4 mt-1"
+                            >
+                              <div className="flex items-center gap-2">
+                                <RadioGroupItem value="REFUND" id={`res-refund-${index}`} />
+                                <Label htmlFor={`res-refund-${index}`} className="text-sm cursor-pointer">
+                                  Refund money
+                                </Label>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <RadioGroupItem value="EXCHANGE" id={`res-exchange-${index}`} />
+                                <Label htmlFor={`res-exchange-${index}`} className="text-sm cursor-pointer">
+                                  Exchange for new one
+                                </Label>
+                              </div>
+                            </RadioGroup>
+                            <div className="text-xs mt-1">
+                              {field.value === 'EXCHANGE' ? (
+                                <span className={insufficientStock ? 'text-destructive' : 'text-muted-foreground'}>
+                                  In stock: {ri.stockCount}
+                                  {insufficientStock ? ' — not enough to exchange, use refund instead.' : ' — no refund, replacement issued from stock.'}
+                                </span>
+                              ) : field.value === 'REFUND' ? (
+                                <span className="text-muted-foreground">
+                                  Refund amount: Rs. {(qty * ri.unitPrice).toFixed(2)}
+                                </span>
+                              ) : null}
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
+                    />
+                  )}
+
+                  {watchedItems[index]?.condition === 'RESALABLE' && (watchedItems[index]?.quantity || 0) > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      Refund amount: Rs. {((watchedItems[index]?.quantity || 0) * ri.unitPrice).toFixed(2)}
+                    </div>
+                  )}
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {returnableItems.length > 0 && totalRefund > 0 && (
+          <div className="flex items-center justify-between rounded-md border bg-muted/50 p-3 text-sm font-medium">
+            <span>Total Refund</span>
+            <span>Rs. {totalRefund.toFixed(2)}</span>
           </div>
         )}
 

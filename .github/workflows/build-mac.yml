@@ -34,6 +34,11 @@ jobs:
           NEXT_PUBLIC_CLIENT_NAME: ${{ vars.NEXT_PUBLIC_CLIENT_NAME || 'nethu' }}
         run: npm run build:next
 
+      - name: Prepare app icon
+        env:
+          NEXT_PUBLIC_CLIENT_NAME: ${{ vars.NEXT_PUBLIC_CLIENT_NAME || 'nethu' }}
+        run: npm run prepare-icon
+
       - name: Create .env for packaging
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}

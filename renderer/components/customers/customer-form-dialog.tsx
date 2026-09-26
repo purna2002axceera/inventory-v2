@@ -12,6 +12,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 
 import { callIpc, IpcError } from '@/lib/ipc-client';
 import { config } from '@/lib/config';
@@ -22,6 +23,8 @@ const customerSchema = z.object({
   phone: z.string().optional(),
   address: z.string().optional(),
   district: z.string().optional().nullable(),
+  creditEnabled: z.boolean().default(false),
+  creditLimit: z.coerce.number().min(0, 'Must be zero or positive').default(0),
 });
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
@@ -38,9 +41,11 @@ export function CustomerFormDialog({
   onSaved: () => void;
 }) {
   const form = useForm<CustomerFormValues>({
-    resolver: zodResolver(customerSchema),
-    defaultValues: { name: '', phone: '', address: '', district: '' },
+    resolver: zodResolver(customerSchema) as any,
+    defaultValues: { name: '', phone: '', address: '', district: '', creditEnabled: false, creditLimit: 0 },
   });
+
+  const creditEnabled = form.watch('creditEnabled');
 
   useEffect(() => {
     if (open) {
@@ -49,6 +54,8 @@ export function CustomerFormDialog({
         phone: editingCustomer?.phone ?? '',
         address: editingCustomer?.address ?? '',
         district: editingCustomer?.district ?? '',
+        creditEnabled: !!editingCustomer?.credit_enabled,
+        creditLimit: editingCustomer?.credit_limit ?? 0,
       });
     }
   }, [open, editingCustomer, form]);
@@ -60,6 +67,8 @@ export function CustomerFormDialog({
         phone: values.phone || undefined,
         address: values.address || undefined,
         district: values.district && values.district !== 'NONE' ? values.district : null,
+        creditEnabled: values.creditEnabled,
+        creditLimit: values.creditEnabled ? values.creditLimit : 0,
       };
 
       if (editingCustomer) {
@@ -148,6 +157,40 @@ export function CustomerFormDialog({
                         ))}
                       </SelectContent>
                     </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            <FormField
+              control={form.control}
+              name="creditEnabled"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between gap-2 rounded-md border p-3 space-y-0">
+                  <FormLabel className="!mt-0 cursor-pointer font-normal">
+                    Enable credit purchases
+                  </FormLabel>
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            {creditEnabled && (
+              <FormField
+                control={form.control}
+                name="creditLimit"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Credit limit (Rs.)</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={0} step="0.01" {...field} />
+                    </FormControl>
+                    {editingCustomer && (editingCustomer.credit_used ?? 0) > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Currently owes Rs. {editingCustomer.credit_used.toFixed(2)} — the limit can't be set below this.
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}

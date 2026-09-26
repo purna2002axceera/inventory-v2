@@ -1,7 +1,8 @@
 const { runTransaction } = require('../db/connection');
+const { wrapHandler } = require('./wrap');
 
 function registerReportsHandlers(ipcMain, getDb) {
-  ipcMain.handle('reports:getStocks', (event, { startDate, endDate, page = 1, pageSize = 200 }) => {
+  ipcMain.handle('reports:getStocks', wrapHandler(({ startDate, endDate, page = 1, pageSize = 200 }) => {
     const db = getDb();
     const safePageSize = Math.min(pageSize || 200, 500);
     const safePage = Math.max(page || 1, 1);
@@ -31,9 +32,9 @@ function registerReportsHandlers(ipcMain, getDb) {
     `).all(...params, safePageSize, offset);
 
     return { items, total: totalRow.count, page: safePage, pageSize: safePageSize };
-  });
-  
-  ipcMain.handle('reports:getGRNs', (event, { startDate, endDate, page = 1, pageSize = 200 }) => {
+  }));
+
+  ipcMain.handle('reports:getGRNs', wrapHandler(({ startDate, endDate, page = 1, pageSize = 200 }) => {
     const db = getDb();
     const safePageSize = Math.min(pageSize || 200, 500);
     const safePage = Math.max(page || 1, 1);
@@ -69,9 +70,9 @@ function registerReportsHandlers(ipcMain, getDb) {
     `).all(...params, safePageSize, offset);
 
     return { receipts, total: totalRow.count, page: safePage, pageSize: safePageSize };
-  });
-  
-  ipcMain.handle('reports:getReturns', (event, { startDate, endDate, page = 1, pageSize = 200 }) => {
+  }));
+
+  ipcMain.handle('reports:getReturns', wrapHandler(({ startDate, endDate, page = 1, pageSize = 200 }) => {
      const db = getDb();
      const safePageSize = Math.min(pageSize || 200, 500);
      const safePage = Math.max(page || 1, 1);
@@ -103,19 +104,31 @@ function registerReportsHandlers(ipcMain, getDb) {
        LIMIT ? OFFSET ?
      `).all(...params, safePageSize, offset);
      
-     const itemsQuery = db.prepare(`
-       SELECT rni.*, i.name, i.sku, i.bike_model
-       FROM return_note_items rni 
-       JOIN items i ON rni.item_id = i.item_id 
-       WHERE rni.return_id = ?
-     `);
-     
-     returns.forEach(r => {
-       r.items = itemsQuery.all(r.return_id);
+     // Batch-fetch every line item for the whole page in one query instead of
+     // one query per return note, so this stays fast as return history grows.
+     const returnIds = returns.map((r) => r.return_id);
+     const itemsByReturn = new Map();
+     if (returnIds.length > 0) {
+       const placeholders = returnIds.map(() => '?').join(',');
+       const allItems = db.prepare(`
+         SELECT rni.*, i.name, i.sku, i.bike_model
+         FROM return_note_items rni
+         JOIN items i ON rni.item_id = i.item_id
+         WHERE rni.return_id IN (${placeholders})
+       `).all(...returnIds);
+
+       for (const item of allItems) {
+         if (!itemsByReturn.has(item.return_id)) itemsByReturn.set(item.return_id, []);
+         itemsByReturn.get(item.return_id).push(item);
+       }
+     }
+
+     returns.forEach((r) => {
+       r.items = itemsByReturn.get(r.return_id) || [];
      });
-     
+
      return { returns, total: totalRow.count, page: safePage, pageSize: safePageSize };
-  });
+  }));
 }
 
 module.exports = { registerReportsHandlers };

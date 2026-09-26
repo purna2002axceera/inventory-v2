@@ -1,6 +1,7 @@
 {
   "name": "inventory-app",
   "version": "0.1.0",
+  "description": "Inventory, production, and sales management system",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -8,9 +9,10 @@
     "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development nodemon --watch electron --exec \"electron .\"",
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:electron\"",
     "build:next": "cd renderer && npm run build",
-    "build": "npm run build:next && electron-builder",
-    "build:mac": "npm run build:next && electron-builder --mac",
-    "build:win": "npm run build:next && electron-builder --win",
+    "prepare-icon": "node scripts/prepare-icon.js",
+    "build": "npm run build:next && npm run prepare-icon && electron-builder",
+    "build:mac": "npm run build:next && npm run prepare-icon && electron-builder --mac",
+    "build:win": "npm run build:next && npm run prepare-icon && electron-builder --win",
     "clear-data": "node clear-data.js"
   },
   "devDependencies": {
@@ -46,17 +48,19 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": false
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.png"
     },
     "mac": {
       "target": [
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.business"
+      "category": "public.app-category.business",
+      "icon": "build/icon.png"
     }
   }
 }

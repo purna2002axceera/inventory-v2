@@ -5,16 +5,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { getCustomerColumns } from './columns';
 import type { Customer } from '@/lib/types';
 
-export function CustomersTable({ 
-  data, 
-  onEdit, 
-  onDelete 
-}: { 
-  data: Customer[]; 
+export function CustomersTable({
+  data,
+  onEdit,
+  onDelete,
+  onViewCreditHistory,
+}: {
+  data: Customer[];
   onEdit: (c: Customer) => void;
   onDelete: (c: Customer) => void;
+  onViewCreditHistory: (c: Customer) => void;
 }) {
-  const columns = getCustomerColumns(onEdit, onDelete);
+  const columns = getCustomerColumns(onEdit, onDelete, onViewCreditHistory);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
 
   return (

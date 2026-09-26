@@ -23,6 +23,7 @@ import { RequireAuth } from '@/components/require-auth';
 import { AppShell } from '@/components/app-shell';
 import { ItemsTable } from '@/components/items/items-table';
 import { ItemFormDialog } from '@/components/items/item-form-dialog';
+import { StockAdjustmentDialog } from '@/components/items/stock-adjustment-dialog';
 import { useDebounce } from '@/hooks/use-debounce';
 import { callIpc, IpcError } from '@/lib/ipc-client';
 import { DatePickerWithRange } from '@/components/ui/date-range-picker';
@@ -44,6 +45,7 @@ function ItemsPageContent() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<Item | null>(null);
+  const [adjustingItem, setAdjustingItem] = useState<Item | null>(null);
 
   const typeSearch = useAsyncSearch<ItemTypeRecord>({
     fetcher: async (params) => {
@@ -161,7 +163,12 @@ function ItemsPageContent() {
         )}
       </div>
 
-      <ItemsTable data={items} onEdit={openEditDialog} onArchive={(item) => setArchiveTarget(item)} />
+      <ItemsTable
+        data={items}
+        onEdit={openEditDialog}
+        onArchive={(item) => setArchiveTarget(item)}
+        onAdjustStock={(item) => setAdjustingItem(item)}
+      />
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>{loading ? 'Loading...' : `${total} item${total === 1 ? '' : 's'} total`}</span>
@@ -183,14 +190,19 @@ function ItemsPageContent() {
         </div>
       </div>
 
-      <ItemFormDialog 
-        open={formOpen} 
+      <ItemFormDialog
+        open={formOpen}
         onOpenChange={(open) => {
           setFormOpen(open);
           if (!open) typeSearch.reload();
-        }} 
-        editingItem={editingItem} 
-        onSaved={loadItems} 
+        }}
+        editingItem={editingItem}
+        onSaved={loadItems}
+      />
+      <StockAdjustmentDialog
+        item={adjustingItem}
+        onOpenChange={(open) => !open && setAdjustingItem(null)}
+        onSaved={loadItems}
       />
       <AlertDialog open={!!archiveTarget} onOpenChange={(open) => !open && setArchiveTarget(null)}>
         <AlertDialogContent>

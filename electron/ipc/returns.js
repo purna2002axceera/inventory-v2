@@ -1,6 +1,8 @@
 const { ValidationError, NotFoundError, ConflictError } = require('../errors');
 const { wrapHandler } = require('./wrap');
 const { runTransaction } = require('../db/connection');
+const { deductStockFifo } = require('../db/stockHelpers');
+const { getSoOutstanding, COST_FLOOR_EPSILON } = require('../db/creditHelpers');
 
 function generateReturnNumber(db) {
   const row = db
@@ -29,7 +31,7 @@ function registerReturnsHandlers(ipcMain, getDb) {
 
       // Get aggregated sold quantities per item from the SO
       const soldItems = db.prepare(
-        `SELECT soi.item_id, i.name AS item_name, i.sku AS item_sku,
+        `SELECT soi.item_id, i.name AS item_name, i.sku AS item_sku, i.stock_count,
                 SUM(soi.quantity) AS sold_qty, soi.unit_price
          FROM sales_order_items soi
          JOIN items i ON i.item_id = soi.item_id
@@ -79,6 +81,7 @@ function registerReturnsHandlers(ipcMain, getDb) {
             pendingReturn,
             maxReturnable,
             unitPrice: item.unit_price,
+            stockCount: item.stock_count,
           };
         })
         .filter((item) => item.maxReturnable > 0);
@@ -117,6 +120,11 @@ function registerReturnsHandlers(ipcMain, getDb) {
         }
         if (!line.condition || !['RESALABLE', 'DAMAGED'].includes(line.condition)) {
           throw new ValidationError(`${label}: Condition must be RESALABLE or DAMAGED.`);
+        }
+        if (type === 'CUSTOMER' && line.condition === 'DAMAGED') {
+          if (!line.resolution || !['REFUND', 'EXCHANGE'].includes(line.resolution)) {
+            throw new ValidationError(`${label}: Resolution must be REFUND or EXCHANGE for a damaged item.`);
+          }
         }
       }
 
@@ -158,6 +166,16 @@ function registerReturnsHandlers(ipcMain, getDb) {
               `Cannot return ${line.quantity} of "${item?.name}": only ${maxReturnable} returnable (${soldQty} sold, ${alreadyReturned} already returned/pending).`
             );
           }
+
+          if (line.condition === 'DAMAGED' && line.resolution === 'EXCHANGE') {
+            const item = db.prepare('SELECT * FROM items WHERE item_id = ?').get(line.itemId);
+            if (!item) throw new NotFoundError('Item not found.');
+            if (item.stock_count < line.quantity) {
+              throw new ValidationError(
+                `Cannot exchange "${item.name}": only ${item.stock_count} in stock, need ${line.quantity} for replacement. Choose refund instead.`
+              );
+            }
+          }
         }
       }
 
@@ -190,10 +208,11 @@ function registerReturnsHandlers(ipcMain, getDb) {
         const returnId = result.lastInsertRowid;
 
         for (const line of items) {
+          const resolution = line.condition === 'RESALABLE' ? 'REFUND' : (line.resolution || null);
           db.prepare(
-            `INSERT INTO return_note_items (return_id, item_id, quantity, condition)
-             VALUES (?, ?, ?, ?)`
-          ).run(returnId, line.itemId, line.quantity, line.condition);
+            `INSERT INTO return_note_items (return_id, item_id, quantity, condition, resolution)
+             VALUES (?, ?, ?, ?, ?)`
+          ).run(returnId, line.itemId, line.quantity, line.condition, resolution);
         }
 
         return { returnId, returnNumber, status: 'PENDING' };
@@ -273,14 +292,23 @@ function registerReturnsHandlers(ipcMain, getDb) {
       if (!returnNote) throw new NotFoundError('Return note not found.');
 
       const items = db.prepare(
-        `SELECT rni.*, i.name AS item_name, i.sku AS item_sku
+        `SELECT rni.*, i.name AS item_name, i.sku AS item_sku,
+                (SELECT MAX(unit_price) FROM sales_order_items WHERE so_id = ? AND item_id = rni.item_id) AS unit_price
          FROM return_note_items rni
          JOIN items i ON i.item_id = rni.item_id
          WHERE rni.return_id = ?
          ORDER BY rni.rni_id ASC`
-      ).all(returnId);
+      ).all(returnNote.so_id, returnId);
 
-      return { ...returnNote, items };
+      // Refund total: RESALABLE and DAMAGED+REFUND lines pay cash back; EXCHANGE lines don't.
+      const totalRefund = returnNote.type === 'CUSTOMER'
+        ? items.reduce((sum, line) => {
+            const isRefund = line.condition === 'RESALABLE' || (line.condition === 'DAMAGED' && line.resolution !== 'EXCHANGE');
+            return isRefund && line.unit_price != null ? sum + line.quantity * line.unit_price : sum;
+          }, 0)
+        : null;
+
+      return { ...returnNote, items, totalRefund };
     })
   );
 
@@ -308,7 +336,18 @@ function registerReturnsHandlers(ipcMain, getDb) {
             db.prepare("UPDATE items SET stock_count = ?, updated_at = datetime('now') WHERE item_id = ?")
               .run(newStock, line.item_id);
 
-            // Restore to original batches using FIFO (oldest batch first)
+            // Restore to original batches using FIFO (oldest batch first). Skip past
+            // whatever prior approved returns for this item on this SO already restocked,
+            // so a second partial return doesn't restore into the same batch twice.
+            const alreadyRestocked = db.prepare(
+              `SELECT COALESCE(SUM(rni.quantity), 0) AS qty
+               FROM return_note_items rni
+               JOIN return_notes rn ON rn.return_id = rni.return_id
+               WHERE rn.so_id = ? AND rni.item_id = ? AND rn.type = 'CUSTOMER'
+                 AND rn.status = 'APPROVED' AND rni.condition = 'RESALABLE'`
+            ).get(returnNote.so_id, line.item_id).qty;
+
+            let skip = alreadyRestocked;
             let remaining = line.quantity;
             const soBatches = db.prepare(
               `SELECT soi.batch_id, SUM(soi.quantity) AS qty
@@ -320,7 +359,14 @@ function registerReturnsHandlers(ipcMain, getDb) {
 
             for (const sb of soBatches) {
               if (remaining <= 0) break;
-              const restore = Math.min(remaining, sb.qty);
+              let available = sb.qty;
+              if (skip > 0) {
+                const consumed = Math.min(skip, available);
+                skip -= consumed;
+                available -= consumed;
+              }
+              if (available <= 0) continue;
+              const restore = Math.min(remaining, available);
               db.prepare('UPDATE batches SET quantity_left = quantity_left + ? WHERE batch_id = ?')
                 .run(restore, sb.batch_id);
               remaining -= restore;
@@ -332,37 +378,24 @@ function registerReturnsHandlers(ipcMain, getDb) {
             ).run(line.item_id, line.quantity, newStock, returnId, `Restocked from ${returnNote.return_number}`);
 
           } else if (returnNote.type === 'CUSTOMER' && line.condition === 'DAMAGED') {
-            // Customer return damaged: no stock change, just record in ledger
+            // Damaged item itself is always discarded — never restocked.
             db.prepare(
               `INSERT INTO stock_ledger (item_id, change_type, quantity_change, resulting_stock, reference_type, reference_id, note)
                VALUES (?, 'RETURN_DISCARD', 0, ?, 'RETURN', ?, ?)`
             ).run(line.item_id, item.stock_count, returnId, `Damaged return discarded from ${returnNote.return_number}`);
 
+            if (line.resolution === 'EXCHANGE') {
+              // No refund — issue a replacement unit of the same item from current stock instead.
+              const newStock = deductStockFifo(db, item, line.quantity);
+              db.prepare(
+                `INSERT INTO stock_ledger (item_id, change_type, quantity_change, resulting_stock, reference_type, reference_id, note)
+                 VALUES (?, 'RETURN_EXCHANGE_ISSUE', ?, ?, 'RETURN', ?, ?)`
+              ).run(line.item_id, -line.quantity, newStock, returnId, `Replacement issued from ${returnNote.return_number}`);
+            }
+
           } else if (returnNote.type === 'INTERNAL') {
             // Internal return: deduct stock
-            const newStock = item.stock_count - line.quantity;
-            if (newStock < 0) {
-              throw new ConflictError(`Insufficient stock for "${item.name}" to process this internal return.`);
-            }
-            db.prepare("UPDATE items SET stock_count = ?, updated_at = datetime('now') WHERE item_id = ?")
-              .run(newStock, line.item_id);
-
-            // Deduct from batches using FIFO (oldest first with available stock)
-            let remaining = line.quantity;
-            const batches = db.prepare(
-              `SELECT batch_id, quantity_left FROM batches
-               WHERE item_id = ? AND quantity_left > 0
-               ORDER BY production_date ASC, batch_id ASC`
-            ).all(line.item_id);
-
-            for (const batch of batches) {
-              if (remaining <= 0) break;
-              const take = Math.min(batch.quantity_left, remaining);
-              db.prepare('UPDATE batches SET quantity_left = quantity_left - ? WHERE batch_id = ?')
-                .run(take, batch.batch_id);
-              remaining -= take;
-            }
-
+            const newStock = deductStockFifo(db, item, line.quantity);
             db.prepare(
               `INSERT INTO stock_ledger (item_id, change_type, quantity_change, resulting_stock, reference_type, reference_id, note)
                VALUES (?, 'INTERNAL_RETURN', ?, ?, 'RETURN', ?, ?)`
@@ -376,12 +409,17 @@ function registerReturnsHandlers(ipcMain, getDb) {
             'SELECT SUM(quantity) as total_sold FROM sales_order_items WHERE so_id = ?'
           ).get(returnNote.so_id);
           
+          // Count this return (about to be marked APPROVED below) plus any other
+          // already-approved returns — but NOT other returns still awaiting a decision,
+          // otherwise a merely-pending return could prematurely cancel the order.
+          // Exchanged units are excluded: the customer kept a replacement, so the sale stands.
           const returnedItems = db.prepare(
             `SELECT SUM(rni.quantity) as total_returned
              FROM return_note_items rni
              JOIN return_notes rn ON rn.return_id = rni.return_id
-             WHERE rn.so_id = ? AND rn.status IN ('APPROVED', 'PENDING')`
-          ).get(returnNote.so_id);
+             WHERE rn.so_id = ? AND (rn.status = 'APPROVED' OR rn.return_id = ?)
+               AND NOT (rni.condition = 'DAMAGED' AND rni.resolution = 'EXCHANGE')`
+          ).get(returnNote.so_id, returnNote.return_id);
 
           if (soItems.total_sold <= (returnedItems.total_returned || 0)) {
             db.prepare("UPDATE sales_orders SET status = 'CANCELLED' WHERE so_id = ?").run(returnNote.so_id);
@@ -393,6 +431,22 @@ function registerReturnsHandlers(ipcMain, getDb) {
           `UPDATE return_notes SET status = 'APPROVED', decided_by = ?, decided_at = datetime('now'), decision_note = ?
            WHERE return_id = ?`
         ).run(userId ?? null, note ?? null, returnId);
+
+        // Credit sales: a refund-eligible return (RESALABLE or DAMAGED+REFUND) can bring the
+        // balance to zero on its own, with no explicit payment ever recorded — e.g. a fully
+        // pending order that gets entirely returned. Flip to PAID here too, same as
+        // recordCreditPayment already does when a payment does this, so the order doesn't sit
+        // showing "Pending Payment" forever once nothing is actually owed. Must run AFTER the
+        // return note above is marked APPROVED, since getSoOutstanding only counts approved
+        // returns — checking before that would still see the pre-return balance.
+        if (returnNote.type === 'CUSTOMER') {
+          const so = db.prepare('SELECT * FROM sales_orders WHERE so_id = ?').get(returnNote.so_id);
+          if (so.payment_type === 'CREDIT' && so.credit_status === 'PENDING_PAYMENT') {
+            if (getSoOutstanding(db, returnNote.so_id) <= COST_FLOOR_EPSILON) {
+              db.prepare("UPDATE sales_orders SET credit_status = 'PAID' WHERE so_id = ?").run(returnNote.so_id);
+            }
+          }
+        }
 
         return { returnId, status: 'APPROVED' };
       });

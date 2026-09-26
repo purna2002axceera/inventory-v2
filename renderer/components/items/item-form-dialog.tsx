@@ -345,13 +345,13 @@ export function ItemFormDialog({
                     <FormItem><FormLabel>Cover (කවරේ)</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                   )} />
                   <FormField control={form.control} name="costNamePrinting" render={({ field }) => (
-                    <FormItem><FormLabel>Name Printing Cost</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                    <FormItem><FormLabel>Helmet Lock/Zipper</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                   )} />
                   <FormField control={form.control} name="costPunch" render={({ field }) => (
                     <FormItem><FormLabel>Punch</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                   )} />
                   <FormField control={form.control} name="costWire" render={({ field }) => (
-                    <FormItem><FormLabel>Wire</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                    <FormItem><FormLabel>Wire/Camrella</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                   )} />
                   <FormField control={form.control} name="costPackingLabor" render={({ field }) => (
                     <FormItem><FormLabel>Packing Labour Cost</FormLabel><FormControl><Input type="number" min={0} step="0.01" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>

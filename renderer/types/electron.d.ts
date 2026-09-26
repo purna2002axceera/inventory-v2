@@ -1,5 +1,16 @@
 import type { IpcResult } from '@/lib/ipc-client';
-import type { Item, ItemTypeRecord, ItemsListResult, ProductionListResult, Customer, CustomersListResult, SalesOrder, SalesOrdersListResult, Batch, BatchesListResult, SalesReportResult, DetailedSalesReportResult, ReturnNotesListResult, ReturnableItemsResult, ReturnNoteDetail } from '@/lib/types';
+import type { Item, ItemTypeRecord, ItemsListResult, ProductionListResult, Customer, CustomersListResult, SalesOrder, SalesOrdersListResult, Batch, BatchesListResult, SalesReportResult, DetailedSalesReportResult, ReturnNotesListResult, ReturnableItemsResult, ReturnNoteDetail, StocksReportResult, GRNsReportResult, ReturnsReportResult, StockAdjustmentsListResult, CreditHistoryResult, CreditPayment } from '@/lib/types';
+
+export interface ReceiptPdfData {
+  soNumber: string;
+  customerName: string;
+  customerPhone: string | null;
+  orderDate: string;
+  logoPath: string;
+  businessDetails: { name: string; address: string; phones: string[]; email: string; regNo?: string } | null;
+  items: { name: string; sku: string; quantity: number; unitPrice: number; returned: number }[];
+  total: number;
+}
 
 declare global {
   interface Window {
@@ -121,15 +132,18 @@ declare global {
       };
       customers: {
         list: (params?: { page?: number; pageSize?: number; search?: string; district?: string }) => Promise<IpcResult<CustomersListResult>>;
-        create: (customer: { name: string; address?: string; phone?: string; district?: string | null }) => Promise<IpcResult<Customer>>;
-        update: (customer: { customerId: number; name?: string; address?: string; phone?: string; district?: string | null }) => Promise<IpcResult<Customer>>;
+        create: (customer: { name: string; address?: string; phone?: string; district?: string | null; creditEnabled?: boolean; creditLimit?: number }) => Promise<IpcResult<Customer>>;
+        update: (customer: { customerId: number; name?: string; address?: string; phone?: string; district?: string | null; creditEnabled?: boolean; creditLimit?: number }) => Promise<IpcResult<Customer>>;
         delete: (customerId: number) => Promise<IpcResult<{ success: boolean }>>;
+        getCreditHistory: (customerId: number) => Promise<IpcResult<CreditHistoryResult>>;
       };
       salesOrders: {
         create: (payload: {
           customerId: number;
           orderDate: string;
           lines: { itemId: number; batchId?: number; quantity: number }[];
+          paymentType?: 'CASH' | 'CREDIT';
+          creditDueDate?: string | null;
         }) => Promise<IpcResult<{ soId: number; soNumber: string; customerId: number; orderDate: string; lines: unknown[] }>>;
         list: (params: {
           page?: number;
@@ -139,8 +153,10 @@ declare global {
           dateTo?: string;
           search?: string;
         }) => Promise<IpcResult<SalesOrdersListResult>>;
-        get: (soId: number) => Promise<IpcResult<SalesOrder & { items: unknown[] }>>;
+        get: (soId: number) => Promise<IpcResult<SalesOrder & { items: unknown[]; creditPayments?: CreditPayment[]; outstanding?: number; refundDue?: number }>>;
         report: (params: { reportType: 'summary' | 'detailed'; dateFrom: string; dateTo: string }) => Promise<IpcResult<SalesReportResult | DetailedSalesReportResult>>;
+        recordCreditPayment: (payload: { soId: number; amount: number; paymentDate: string; note?: string }) => Promise<IpcResult<{ soId: number; outstanding: number; status: string }>>;
+        writeOffCredit: (payload: { soId: number; note?: string }) => Promise<IpcResult<{ soId: number; writtenOffAmount: number; status: string }>>;
       };
       returns: {
         create: (payload: {
@@ -148,7 +164,7 @@ declare global {
           soId?: number;
           returnDate: string;
           reason?: string;
-          items: { itemId: number; quantity: number; condition: 'RESALABLE' | 'DAMAGED' }[];
+          items: { itemId: number; quantity: number; condition: 'RESALABLE' | 'DAMAGED'; resolution?: 'REFUND' | 'EXCHANGE' }[];
         }) => Promise<IpcResult<{ returnId: number; returnNumber: string; status: string }>>;
         list: (params: {
           page?: number;
@@ -164,14 +180,22 @@ declare global {
         reject: (payload: { returnId: number; userId?: number; note?: string }) => Promise<IpcResult<{ returnId: number; status: string }>>;
         getReturnableItems: (soNumber: string) => Promise<IpcResult<ReturnableItemsResult>>;
       };
+      stockAdjustments: {
+        create: (payload: {
+          itemId: number;
+          actualCount: number;
+          reason: string;
+        }) => Promise<IpcResult<{ itemId: number; previousStock: number; newStock: number; delta: number }>>;
+        listForItem: (params: { itemId: number; limit?: number }) => Promise<IpcResult<StockAdjustmentsListResult>>;
+      };
       reports: {
-        getStocks: (params: { startDate?: string; endDate?: string; pageSize?: number }) => Promise<any>;
-        getGRNs: (params: { startDate?: string; endDate?: string; pageSize?: number }) => Promise<any>;
-        getReturns: (params: { startDate?: string; endDate?: string; pageSize?: number }) => Promise<any>;
+        getStocks: (params: { startDate?: string; endDate?: string; pageSize?: number }) => Promise<IpcResult<StocksReportResult>>;
+        getGRNs: (params: { startDate?: string; endDate?: string; pageSize?: number }) => Promise<IpcResult<GRNsReportResult>>;
+        getReturns: (params: { startDate?: string; endDate?: string; pageSize?: number }) => Promise<IpcResult<ReturnsReportResult>>;
       };
       system: {
         printToPDF: (reportData: any) => Promise<{ success: boolean; filePath?: string; error?: string }>;
-        saveReceiptPdf: (payload: { base64Data: string; filename: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+        generateReceiptPdf: (payload: { receiptData: ReceiptPdfData; filename: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
       };
       dashboard: {

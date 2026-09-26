@@ -1,6 +1,16 @@
-const { BrowserWindow } = require('electron');
+const { app, BrowserWindow } = require('electron');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 
 async function generatePDF(htmlContent) {
+  // Receipts can embed a base64 logo, which makes the HTML too large for a data: URL
+  // (loadURL silently never fires did-finish-load past a couple MB once percent-encoded,
+  // which left the caller hanging on "Generating..." forever). A temp file has no such limit.
+  const tempFile = path.join(os.tmpdir(), `receipt-${crypto.randomUUID()}.html`);
+  fs.writeFileSync(tempFile, htmlContent, 'utf-8');
+
   return new Promise((resolve, reject) => {
     let win = new BrowserWindow({
       show: false,
@@ -10,7 +20,10 @@ async function generatePDF(htmlContent) {
       }
     });
 
-    win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+    const cleanup = () => {
+      win.destroy();
+      fs.unlink(tempFile, () => {});
+    };
 
     win.webContents.on('did-finish-load', async () => {
       try {
@@ -24,10 +37,134 @@ async function generatePDF(htmlContent) {
       } catch (err) {
         reject(err);
       } finally {
-        win.destroy();
+        cleanup();
       }
     });
+
+    win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      reject(new Error(`Failed to load PDF content: ${errorDescription} (${errorCode})`));
+      cleanup();
+    });
+
+    win.loadFile(tempFile);
   });
+}
+
+// Reads a file from renderer/public (dev) or renderer/out (packaged) and returns it as a data: URI,
+// since the hidden BrowserWindow used for printToPDF loads a standalone data: URL with no base to
+// resolve relative asset paths against.
+function resolvePublicAssetDataUri(publicPath) {
+  if (!publicPath) return null;
+  const relative = publicPath.replace(/^\/+/, '');
+  const baseDir = app.isPackaged
+    ? path.join(__dirname, '..', 'renderer', 'out')
+    : path.join(__dirname, '..', 'renderer', 'public');
+  const filePath = path.join(baseDir, relative);
+  if (!fs.existsSync(filePath)) return null;
+
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mime = ext === 'jpg' ? 'jpeg' : ext || 'png';
+  const data = fs.readFileSync(filePath).toString('base64');
+  return `data:image/${mime};base64,${data}`;
+}
+
+function renderReceiptHTML(receipt) {
+  const { soNumber, customerName, customerPhone, orderDate, logoPath, businessDetails, items, total } = receipt;
+  const logoDataUri = resolvePublicAssetDataUri(logoPath);
+
+  const ITEMS_PER_PAGE = 16;
+  const pages = [];
+  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
+    pages.push(items.slice(i, i + ITEMS_PER_PAGE));
+  }
+  if (pages.length === 0) pages.push([]);
+  const totalPages = pages.length;
+
+  const customerLine = [customerName, customerPhone, orderDate].filter(Boolean).join(' &bull; ');
+
+  const pagesHTML = pages.map((pageItems, pageIndex) => `
+    <div class="receipt-page"${pageIndex < totalPages - 1 ? ' style="page-break-after: always;"' : ''}>
+      <div class="header">
+        <div class="header-top">
+          ${logoDataUri ? `<img src="${logoDataUri}" alt="Logo" />` : ''}
+          ${businessDetails ? `
+            <div class="biz-details">
+              <div class="name">${businessDetails.name}</div>
+              <div>${businessDetails.address}</div>
+              ${businessDetails.phones && businessDetails.phones.length > 0 ? `<div>Tel: ${businessDetails.phones.join(' / ')}</div>` : ''}
+              <div>${businessDetails.email}</div>
+              ${businessDetails.regNo ? `<div>Reg No. ${businessDetails.regNo}</div>` : ''}
+            </div>
+          ` : ''}
+        </div>
+        <h2 class="title">Sales Order Receipt</h2>
+      </div>
+
+      <div class="customer-info">
+        ${customerLine}
+        ${totalPages > 1 ? `<span class="page-indicator">Page ${pageIndex + 1} of ${totalPages}</span>` : ''}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="text-right">Qty</th>
+            <th class="text-right">Unit Price</th>
+            <th class="text-right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${pageItems.map(line => `
+            <tr>
+              <td>${line.name} <span class="sku">${line.sku}</span></td>
+              <td class="text-right">${line.quantity}${line.returned > 0 ? `<span class="returned">(${line.returned} returned)</span>` : ''}</td>
+              <td class="text-right">Rs. ${line.unitPrice.toFixed(2)}</td>
+              <td class="text-right">Rs. ${(line.quantity * line.unitPrice).toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      ${pageIndex === totalPages - 1 ? `
+        <div class="total">Total: Rs. ${total.toFixed(2)}</div>
+        <div class="footer">Developed by CA Software Solutions 0770301793</div>
+      ` : ''}
+    </div>
+  `).join('');
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>${soNumber}</title>
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #171717; margin: 0; }
+        .receipt-page { padding: 8mm 10mm; box-sizing: border-box; min-height: 100vh; display: flex; flex-direction: column; }
+        .header { margin-bottom: 20px; border-bottom: 1px solid #e5e7eb; padding-bottom: 14px; }
+        .header-top { display: flex; align-items: center; justify-content: center; gap: 28px; margin-bottom: 12px; }
+        .header img { height: 170px; width: 170px; object-fit: contain; flex-shrink: 0; }
+        .biz-details { font-size: 12px; color: #111; line-height: 1.5; text-align: left; }
+        .biz-details .name { font-weight: 700; font-size: 24px; margin-bottom: 4px; }
+        .title { font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin: 0; text-align: center; }
+        .customer-info { font-size: 13px; font-weight: 500; color: #111; margin-bottom: 8px; overflow: hidden; }
+        .page-indicator { float: right; font-size: 11px; color: #6b7280; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px 6px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 13px; }
+        th { font-size: 11px; text-transform: uppercase; color: #4b5563; }
+        .text-right { text-align: right; }
+        .sku { font-size: 11px; font-family: monospace; color: #6b7280; margin-left: 4px; }
+        .returned { font-size: 11px; color: #dc2626; margin-left: 4px; }
+        .total { text-align: right; font-weight: 700; margin-top: 16px; font-size: 14px; }
+        .footer { text-align: center; font-size: 11px; color: #555; padding: 10px 0; margin-top: auto; }
+      </style>
+    </head>
+    <body>
+      ${pagesHTML}
+    </body>
+    </html>
+  `;
 }
 
 function renderReportHTML(reportData) {
@@ -503,4 +640,4 @@ function renderSummaryReportHTML(reportData) {
   `;
 }
 
-module.exports = { generatePDF, renderReportHTML };
+module.exports = { generatePDF, renderReportHTML, renderReceiptHTML };

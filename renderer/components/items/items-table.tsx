@@ -23,13 +23,15 @@ export function ItemsTable({
   data,
   onEdit,
   onArchive,
+  onAdjustStock,
 }: {
   data: Item[];
   onEdit: (item: Item) => void;
   onArchive: (item: Item) => void;
+  onAdjustStock: (item: Item) => void;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const columns = getColumns({ onEdit, onArchive });
+  const columns = getColumns({ onEdit, onArchive, onAdjustStock });
 
   const table = useReactTable({
     data,

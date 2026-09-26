@@ -11,6 +11,7 @@ import { RequireAuth } from '@/components/require-auth';
 import { AppShell } from '@/components/app-shell';
 import { CustomersTable } from '@/components/customers/customers-table';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
+import { CreditHistoryDialog } from '@/components/customers/credit-history-dialog';
 import { useDebounce } from '@/hooks/use-debounce';
 import { callIpc, IpcError } from '@/lib/ipc-client';
 import { config } from '@/lib/config';
@@ -38,6 +39,7 @@ function CustomersPageContent() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
+  const [historyCustomerId, setHistoryCustomerId] = useState<number | null>(null);
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -155,7 +157,12 @@ function CustomersPageContent() {
         )}
       </div>
 
-      <CustomersTable data={customers} onEdit={openEditDialog} onDelete={(customer) => setDeleteTarget(customer)} />
+      <CustomersTable
+        data={customers}
+        onEdit={openEditDialog}
+        onDelete={(customer) => setDeleteTarget(customer)}
+        onViewCreditHistory={(customer) => setHistoryCustomerId(customer.customer_id)}
+      />
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>{loading ? 'Loading...' : `${total} customer${total === 1 ? '' : 's'} total`}</span>
@@ -178,6 +185,7 @@ function CustomersPageContent() {
       </div>
 
       <CustomerFormDialog open={formOpen} onOpenChange={setFormOpen} editingCustomer={editingCustomer} onSaved={loadCustomers} />
+      <CreditHistoryDialog customerId={historyCustomerId} onOpenChange={(open) => !open && setHistoryCustomerId(null)} />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

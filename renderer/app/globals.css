@@ -159,3 +159,31 @@
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, currentColor 30%, transparent) transparent;
 }
+
+/* Receipt branding footer – hidden on screen */
+.receipt-page-footer {
+  display: none;
+}
+
+/* Pin the branding to the bottom of every printed A4 page */
+@media print {
+  @page {
+    margin-bottom: 20mm;
+  }
+
+  .receipt-page {
+    padding: 8mm;
+  }
+
+  .receipt-page-footer {
+    display: block;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 0.7em;
+    color: #555;
+    padding: 4px 0;
+  }
+}

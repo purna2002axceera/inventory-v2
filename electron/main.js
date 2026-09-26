@@ -26,11 +26,12 @@ const { registerProductionHandlers } = require('./ipc/production');
 const { registerCustomersHandlers } = require('./ipc/customers');
 const { registerSalesOrdersHandlers } = require('./ipc/salesOrders');
 const { registerReturnsHandlers } = require('./ipc/returns');
+const { registerStockAdjustmentsHandlers } = require('./ipc/stockAdjustments');
 const { registerDashboardHandlers } = require('./ipc/dashboard');
 const { registerReportsHandlers } = require('./ipc/reports');
 const { registerDriveHandlers, performBackup } = require('./ipc/drive');
 const { registerLicenseHandlers } = require('./ipc/license');
-const { generatePDF, renderReportHTML } = require('./pdfGenerator');
+const { generatePDF, renderReportHTML, renderReceiptHTML } = require('./pdfGenerator');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -78,6 +79,7 @@ app.whenReady().then(() => {
   registerCustomersHandlers(ipcMain, getDb);
   registerSalesOrdersHandlers(ipcMain, getDb);
   registerReturnsHandlers(ipcMain, getDb);
+  registerStockAdjustmentsHandlers(ipcMain, getDb);
   registerDashboardHandlers(ipcMain, getDb);
   registerReportsHandlers(ipcMain, getDb);
   registerDriveHandlers(ipcMain, getDb);
@@ -104,14 +106,15 @@ app.whenReady().then(() => {
     return { success: false };
   });
 
-  ipcMain.handle('system:saveReceiptPdf', async (event, { base64Data, filename }) => {
+  ipcMain.handle('system:generateReceiptPdf', async (event, { receiptData, filename }) => {
     try {
-      const buffer = Buffer.from(base64Data, 'base64');
+      const html = renderReceiptHTML(receiptData);
+      const data = await generatePDF(html);
       const defaultPath = path.join(app.getPath('desktop'), filename);
-      fs.writeFileSync(defaultPath, buffer);
+      fs.writeFileSync(defaultPath, data);
       return { success: true, filePath: defaultPath };
     } catch (err) {
-      console.error('saveReceiptPdf failed', err);
+      console.error('generateReceiptPdf failed', err);
       return { success: false, error: err.message };
     }
   });

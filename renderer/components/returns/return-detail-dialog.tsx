@@ -114,26 +114,49 @@ export function ReturnDetailDialog({
                     <TableHead>Item</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
                     <TableHead>Condition</TableHead>
+                    {detail.type === 'CUSTOMER' && <TableHead className="text-right">Refund</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {detail.items.map((line) => (
-                    <TableRow key={line.rni_id}>
-                      <TableCell>
-                        {line.item_name}{' '}
-                        <span className="text-xs text-muted-foreground font-mono">{line.item_sku}</span>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{line.quantity}</TableCell>
-                      <TableCell>
-                        <Badge variant={line.condition === 'RESALABLE' ? 'default' : 'destructive'}>
-                          {line.condition === 'RESALABLE' ? 'Resalable' : 'Damaged'}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {detail.items.map((line) => {
+                    const isRefund = line.condition === 'RESALABLE' || (line.condition === 'DAMAGED' && line.resolution !== 'EXCHANGE');
+                    return (
+                      <TableRow key={line.rni_id}>
+                        <TableCell>
+                          {line.item_name}{' '}
+                          <span className="text-xs text-muted-foreground font-mono">{line.item_sku}</span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{line.quantity}</TableCell>
+                        <TableCell className="space-x-1">
+                          <Badge variant={line.condition === 'RESALABLE' ? 'default' : 'destructive'}>
+                            {line.condition === 'RESALABLE' ? 'Resalable' : 'Damaged'}
+                          </Badge>
+                          {line.condition === 'DAMAGED' && (
+                            <Badge variant="outline">
+                              {line.resolution === 'EXCHANGE' ? 'Exchanged' : 'Refunded'}
+                            </Badge>
+                          )}
+                        </TableCell>
+                        {detail.type === 'CUSTOMER' && (
+                          <TableCell className="text-right tabular-nums">
+                            {isRefund && line.unit_price != null
+                              ? `Rs. ${(line.quantity * line.unit_price).toFixed(2)}`
+                              : '—'}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
+
+            {detail.type === 'CUSTOMER' && detail.totalRefund != null && detail.totalRefund > 0 && (
+              <div className="flex items-center justify-between rounded-md border bg-muted/50 p-3 text-sm font-medium">
+                <span>Total Refund</span>
+                <span>Rs. {detail.totalRefund.toFixed(2)}</span>
+              </div>
+            )}
 
             {detail.decision_note && (
               <div className="text-sm">

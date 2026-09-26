@@ -1,6 +1,7 @@
 const { ValidationError, NotFoundError, InsufficientStockError, ConflictError } = require('../errors');
 const { wrapHandler } = require('./wrap');
 const { runTransaction } = require('../db/connection');
+const { getSoOutstanding, getSoRefundDue, getCustomerCreditUsed, COST_FLOOR_EPSILON } = require('../db/creditHelpers');
 
 function generateSoNumber(db) {
   const row = db
@@ -61,9 +62,15 @@ function resolveManualBatch(db, itemId, batchId, quantityNeeded) {
 function registerSalesOrdersHandlers(ipcMain, getDb) {
   ipcMain.handle(
     'salesOrders:create',
-    wrapHandler(({ customerId, orderDate, lines }) => {
+    wrapHandler(({ customerId, orderDate, lines, paymentType = 'CASH', creditDueDate = null }) => {
       if (!customerId) throw new ValidationError('Customer is required.');
       if (!orderDate) throw new ValidationError('Order date is required.');
+      if (!['CASH', 'CREDIT'].includes(paymentType)) {
+        throw new ValidationError('Payment type must be CASH or CREDIT.');
+      }
+      if (paymentType === 'CREDIT' && !creditDueDate) {
+        throw new ValidationError('A due date is required for credit sales.');
+      }
       if (!Array.isArray(lines) || lines.length === 0) {
         throw new ValidationError('At least one order line is required.');
       }
@@ -104,21 +111,48 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
           ? resolveManualBatch(db, line.itemId, line.batchId, line.quantity)
           : resolveFifo(db, line.itemId, line.quantity);
 
-        return { 
-          itemId: line.itemId, 
-          quantity: line.quantity, 
+        return {
+          itemId: line.itemId,
+          quantity: line.quantity,
           unitCost: item.unit_cost,
           unitPrice: item.unit_price,
-          draws 
+          draws
         };
       });
 
+      // Credit-limit gate — checked after pricing is resolved (so the exact total is known) but
+      // before anything is written. Hard block, not a warning: the UI shows a live preview of
+      // this same math, but this is the actual enforcement.
+      if (paymentType === 'CREDIT') {
+        if (!customer.credit_enabled) {
+          throw new ValidationError(`"${customer.name}" is not enabled for credit purchases.`);
+        }
+        const orderTotal = resolvedLines.reduce(
+          (sum, resolved) => sum + resolved.draws.reduce((s, d) => s + resolved.unitPrice * d.quantity, 0),
+          0
+        );
+        const currentlyUsed = getCustomerCreditUsed(db, customerId);
+        const available = customer.credit_limit - currentlyUsed;
+        if (orderTotal > available + COST_FLOOR_EPSILON) {
+          throw new ValidationError(
+            `This order (Rs. ${orderTotal.toFixed(2)}) exceeds "${customer.name}"'s available credit ` +
+              `(Rs. ${available.toFixed(2)} available of a Rs. ${customer.credit_limit.toFixed(2)} limit — ` +
+              `Rs. ${currentlyUsed.toFixed(2)} already owed on other credit sales).`
+          );
+        }
+      }
+
       return runTransaction(db, () => {
         const soNumber = generateSoNumber(db);
+        const creditStatus = paymentType === 'CREDIT' ? 'PENDING_PAYMENT' : null;
+        const dueDate = paymentType === 'CREDIT' ? creditDueDate : null;
 
         const soResult = db
-          .prepare(`INSERT INTO sales_orders (so_number, customer_id, order_date, status) VALUES (?, ?, ?, 'COMPLETED')`)
-          .run(soNumber, customerId, orderDate);
+          .prepare(
+            `INSERT INTO sales_orders (so_number, customer_id, order_date, status, payment_type, credit_status, credit_due_date)
+             VALUES (?, ?, ?, 'COMPLETED', ?, ?, ?)`
+          )
+          .run(soNumber, customerId, orderDate, paymentType, creditStatus, dueDate);
 
         const soId = soResult.lastInsertRowid;
 
@@ -244,9 +278,83 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
         )
         .all(soId);
 
+      if (order.payment_type === 'CREDIT') {
+        const creditPayments = db
+          .prepare('SELECT * FROM credit_payments WHERE so_id = ? ORDER BY payment_date ASC, payment_id ASC')
+          .all(soId);
+        const outstanding = order.credit_status === 'WRITTEN_OFF' ? 0 : getSoOutstanding(db, soId);
+        const refundDue = order.credit_status === 'WRITTEN_OFF' ? 0 : getSoRefundDue(db, soId);
+        return { ...order, items, creditPayments, outstanding, refundDue };
+      }
+
       return { ...order, items };
     })
   );
+
+  ipcMain.handle(
+    'salesOrders:recordCreditPayment',
+    wrapHandler(({ soId, amount, paymentDate, note }) => {
+      const db = getDb();
+      const so = db.prepare('SELECT * FROM sales_orders WHERE so_id = ?').get(soId);
+      if (!so) throw new NotFoundError('Sales order not found.');
+      if (so.payment_type !== 'CREDIT') throw new ValidationError('This sales order is not a credit sale.');
+      if (so.credit_status !== 'PENDING_PAYMENT') {
+        throw new ConflictError(`This credit sale is already ${so.credit_status.replace('_', ' ').toLowerCase()}.`);
+      }
+      if (!paymentDate) throw new ValidationError('Payment date is required.');
+
+      const numAmount = Number(amount);
+      if (!Number.isFinite(numAmount) || numAmount <= 0) {
+        throw new ValidationError('Payment amount must be greater than zero.');
+      }
+
+      const outstanding = getSoOutstanding(db, soId);
+      if (numAmount > outstanding + COST_FLOOR_EPSILON) {
+        throw new ValidationError(
+          `Payment (Rs. ${numAmount.toFixed(2)}) exceeds the outstanding balance (Rs. ${outstanding.toFixed(2)}).`
+        );
+      }
+
+      return runTransaction(db, () => {
+        db.prepare('INSERT INTO credit_payments (so_id, amount, payment_date, note) VALUES (?, ?, ?, ?)')
+          .run(soId, numAmount, paymentDate, note ? note.trim() : null);
+
+        const newOutstanding = getSoOutstanding(db, soId);
+        const fullyPaid = newOutstanding <= COST_FLOOR_EPSILON;
+        if (fullyPaid) {
+          db.prepare("UPDATE sales_orders SET credit_status = 'PAID' WHERE so_id = ?").run(soId);
+        }
+
+        return { soId, outstanding: fullyPaid ? 0 : newOutstanding, status: fullyPaid ? 'PAID' : 'PENDING_PAYMENT' };
+      });
+    })
+  );
+
+  ipcMain.handle(
+    'salesOrders:writeOffCredit',
+    wrapHandler(({ soId, note }) => {
+      const db = getDb();
+      const so = db.prepare('SELECT * FROM sales_orders WHERE so_id = ?').get(soId);
+      if (!so) throw new NotFoundError('Sales order not found.');
+      if (so.payment_type !== 'CREDIT') throw new ValidationError('This sales order is not a credit sale.');
+      if (so.credit_status !== 'PENDING_PAYMENT') {
+        throw new ConflictError(`This credit sale is already ${so.credit_status.replace('_', ' ').toLowerCase()}.`);
+      }
+
+      const outstanding = getSoOutstanding(db, soId);
+      if (outstanding <= COST_FLOOR_EPSILON) {
+        throw new ValidationError('This credit sale has no outstanding balance to write off.');
+      }
+
+      db.prepare(
+        `UPDATE sales_orders SET credit_status = 'WRITTEN_OFF', written_off_amount = ?, written_off_at = datetime('now'), written_off_note = ?
+         WHERE so_id = ?`
+      ).run(outstanding, note ? note.trim() : null, soId);
+
+      return { soId, writtenOffAmount: outstanding, status: 'WRITTEN_OFF' };
+    })
+  );
+
   ipcMain.handle(
     'salesOrders:report',
     wrapHandler(({ dateFrom, dateTo, reportType = 'summary' }) => {
@@ -263,37 +371,46 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
           ORDER BY so.order_date DESC, so.so_id DESC
         `).all(dateFrom, dateTo);
 
-        let totalRevenue = 0;
-        const orders = [];
+        // Batch-fetch every order line in one query instead of one query per
+        // order, so this stays fast as order history grows over the years.
+        const soIds = ordersRows.map((o) => o.so_id);
+        const linesBySoId = new Map();
+        if (soIds.length > 0) {
+          const placeholders = soIds.map(() => '?').join(',');
+          const allLines = db.prepare(`
+            SELECT soi.so_id, soi.quantity, soi.unit_price, i.name AS item_name, i.sku AS item_sku
+            FROM sales_order_items soi
+            JOIN items i ON i.item_id = soi.item_id
+            WHERE soi.so_id IN (${placeholders})
+            ORDER BY soi.soi_id ASC
+          `).all(...soIds);
 
-        for (const o of ordersRows) {
-           const lines = db.prepare(`
-             SELECT soi.*, i.name AS item_name, i.sku AS item_sku
-             FROM sales_order_items soi
-             JOIN items i ON i.item_id = soi.item_id
-             WHERE soi.so_id = ?
-             ORDER BY soi.soi_id ASC
-           `).all(o.so_id).map(l => ({
-             itemName: l.item_name,
-             itemSku: l.item_sku,
-             quantity: l.quantity,
-             unitPrice: l.unit_price,
-             totalPrice: l.quantity * l.unit_price
-           }));
-           
-           orders.push({
-             soNumber: o.so_number,
-             customerName: o.customer_name,
-             orderDate: o.order_date,
-             status: o.status,
-             totalAmount: o.total_amount,
-             lines
-           });
-           
-           if (o.status === 'COMPLETED') {
-             totalRevenue += o.total_amount;
-           }
+          for (const l of allLines) {
+            if (!linesBySoId.has(l.so_id)) linesBySoId.set(l.so_id, []);
+            linesBySoId.get(l.so_id).push({
+              itemName: l.item_name,
+              itemSku: l.item_sku,
+              quantity: l.quantity,
+              unitPrice: l.unit_price,
+              totalPrice: l.quantity * l.unit_price,
+            });
+          }
         }
+
+        let totalRevenue = 0;
+        const orders = ordersRows.map((o) => {
+          if (o.status === 'COMPLETED') {
+            totalRevenue += o.total_amount;
+          }
+          return {
+            soNumber: o.so_number,
+            customerName: o.customer_name,
+            orderDate: o.order_date,
+            status: o.status,
+            totalAmount: o.total_amount,
+            lines: linesBySoId.get(o.so_id) || [],
+          };
+        });
 
         return {
           type: 'detailed',
@@ -319,42 +436,76 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
            FROM sales_order_items soi
            JOIN sales_orders so ON so.so_id = soi.so_id
            JOIN items i ON i.item_id = soi.item_id
-           WHERE so.status = 'COMPLETED'
-             AND so.order_date >= ? 
+           WHERE so.status != 'PENDING'
+             AND so.order_date >= ?
              AND so.order_date <= ?
            GROUP BY i.item_id, i.sku, i.name`
         )
         .all(dateFrom, dateTo);
 
-      // Get the aggregated returns for the date range
+      // Get the aggregated returns for the date range.
+      // RESALABLE and DAMAGED+REFUND lines reverse the original sale (revenue and cost both
+      // back out, net effect = -margin). DAMAGED+EXCHANGE lines don't touch the sale at all —
+      // the customer kept their purchase — they only add the replacement unit's current cost
+      // as pure loss (exchange_replacement_cost), priced at today's unit_cost since it's a
+      // fresh unit drawn now, not the original sale's snapshotted cost.
       const returns = db
         .prepare(
-          `SELECT 
+          `SELECT
              i.item_id,
              i.sku,
              i.name,
-             SUM(rni.quantity) as returned_qty,
-             SUM(rni.quantity * (SELECT MAX(unit_price) FROM sales_order_items WHERE so_id = rn.so_id AND item_id = rni.item_id)) as returned_revenue,
-             SUM(CASE 
+             SUM(CASE
+                 WHEN rni.condition = 'RESALABLE' OR (rni.condition = 'DAMAGED' AND COALESCE(rni.resolution, 'REFUND') = 'REFUND')
+                 THEN rni.quantity ELSE 0
+                 END) as returned_qty,
+             SUM(CASE
+                 WHEN rni.condition = 'RESALABLE' OR (rni.condition = 'DAMAGED' AND COALESCE(rni.resolution, 'REFUND') = 'REFUND')
+                 THEN rni.quantity * (SELECT MAX(unit_price) FROM sales_order_items WHERE so_id = rn.so_id AND item_id = rni.item_id)
+                 ELSE 0
+                 END) as returned_revenue,
+             SUM(CASE
                  WHEN rni.condition = 'RESALABLE' THEN rni.quantity * (SELECT MAX(unit_cost) FROM sales_order_items WHERE so_id = rn.so_id AND item_id = rni.item_id)
-                 ELSE 0 
+                 ELSE 0
                  END) as returned_cost,
-             SUM(CASE 
-                 WHEN rni.condition = 'DAMAGED' THEN rni.quantity * (SELECT MAX(unit_cost) FROM sales_order_items WHERE so_id = rn.so_id AND item_id = rni.item_id)
-                 ELSE 0 
-                 END) as damaged_cost
+             SUM(CASE
+                 WHEN rni.condition = 'DAMAGED' AND COALESCE(rni.resolution, 'REFUND') = 'REFUND'
+                 THEN rni.quantity * (SELECT MAX(unit_cost) FROM sales_order_items WHERE so_id = rn.so_id AND item_id = rni.item_id)
+                 ELSE 0
+                 END) as damaged_refund_cost,
+             SUM(CASE
+                 WHEN rni.condition = 'DAMAGED' AND rni.resolution = 'EXCHANGE' THEN rni.quantity * i.unit_cost
+                 ELSE 0
+                 END) as exchange_replacement_cost
            FROM return_note_items rni
            JOIN return_notes rn ON rn.return_id = rni.return_id
            JOIN items i ON i.item_id = rni.item_id
            JOIN sales_orders so ON so.so_id = rn.so_id
-           WHERE rn.type = 'CUSTOMER' 
+           WHERE rn.type = 'CUSTOMER'
              AND rn.status = 'APPROVED'
-             AND so.status = 'COMPLETED'
-             AND rn.return_date >= ? 
+             AND so.status != 'PENDING'
+             AND rn.return_date >= ?
              AND rn.return_date <= ?
            GROUP BY i.item_id, i.sku, i.name`
         )
         .all(dateFrom, dateTo);
+
+      // Bad debt: credit sales written off as unrecoverable within the report range. The
+      // written-off amount is distributed across the order's items proportional to each item's
+      // share of that order's revenue — same idea as damagedLoss, just keyed off write-offs.
+      const writeOffs = db
+        .prepare(
+          `SELECT so.so_id, so.written_off_amount, soi.item_id, i.sku, i.name,
+                  SUM(soi.quantity * soi.unit_price) as item_revenue,
+                  (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM sales_order_items WHERE so_id = so.so_id) as so_total_revenue
+           FROM sales_orders so
+           JOIN sales_order_items soi ON soi.so_id = so.so_id
+           JOIN items i ON i.item_id = soi.item_id
+           WHERE so.payment_type = 'CREDIT' AND so.credit_status = 'WRITTEN_OFF'
+             AND so.written_off_at >= ? AND so.written_off_at <= ?
+           GROUP BY so.so_id, soi.item_id`
+        )
+        .all(dateFrom, dateTo + ' 23:59:59');
 
       const itemsMap = new Map();
 
@@ -368,6 +519,7 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
           totalCost: s.total_cost,
           latestUnitCost: s.latest_unit_cost || 0,
           damagedLoss: 0,
+          badDebtLoss: 0,
         });
       }
 
@@ -380,28 +532,50 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
             quantitySold: 0,
             totalRevenue: 0,
             totalCost: 0,
-            latestUnitCost: 0, 
+            latestUnitCost: 0,
             damagedLoss: 0,
+            badDebtLoss: 0,
           });
         }
         const entry = itemsMap.get(r.item_id);
         entry.quantitySold -= r.returned_qty;
         entry.totalRevenue -= (r.returned_revenue || 0);
-        entry.totalCost -= ((r.returned_cost || 0) + (r.damaged_cost || 0));
-        entry.damagedLoss += (r.damaged_cost || 0);
+        entry.totalCost -= ((r.returned_cost || 0) + (r.damaged_refund_cost || 0));
+        entry.damagedLoss += ((r.damaged_refund_cost || 0) + (r.exchange_replacement_cost || 0));
+      }
+
+      for (const w of writeOffs) {
+        if (!itemsMap.has(w.item_id)) {
+          itemsMap.set(w.item_id, {
+            itemId: w.item_id,
+            sku: w.sku,
+            name: w.name,
+            quantitySold: 0,
+            totalRevenue: 0,
+            totalCost: 0,
+            latestUnitCost: 0,
+            damagedLoss: 0,
+            badDebtLoss: 0,
+          });
+        }
+        const entry = itemsMap.get(w.item_id);
+        const share = w.so_total_revenue > 0 ? (w.item_revenue / w.so_total_revenue) * w.written_off_amount : 0;
+        entry.badDebtLoss += share;
       }
 
       let overallSales = 0;
       let overallProfit = 0;
       let overallDamagedLoss = 0;
+      let overallBadDebtLoss = 0;
 
       const reportItems = Array.from(itemsMap.values())
-        .filter((entry) => entry.quantitySold !== 0 || entry.totalRevenue !== 0 || entry.damagedLoss !== 0) // omit items that net to zero and had no other activity
+        .filter((entry) => entry.quantitySold !== 0 || entry.totalRevenue !== 0 || entry.damagedLoss !== 0 || entry.badDebtLoss !== 0) // omit items that net to zero and had no other activity
         .map((entry) => {
-          const profit = entry.totalRevenue - entry.totalCost - entry.damagedLoss;
+          const profit = entry.totalRevenue - entry.totalCost - entry.damagedLoss - entry.badDebtLoss;
           overallSales += entry.totalRevenue;
           overallProfit += profit;
           overallDamagedLoss += entry.damagedLoss;
+          overallBadDebtLoss += entry.badDebtLoss;
           return {
             ...entry,
             profit,
@@ -417,6 +591,7 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
         totalSales: overallSales,
         totalProfit: overallProfit,
         totalDamagedLoss: overallDamagedLoss,
+        totalBadDebtLoss: overallBadDebtLoss,
       };
     })
   );
