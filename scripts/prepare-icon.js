@@ -9,6 +9,7 @@ const clientName = process.env.NEXT_PUBLIC_CLIENT_NAME || 'nethu';
 
 const ICONS_BY_CLIENT = {
   nethu: path.join(__dirname, '..', 'build-assets', 'icons', 'nethu.png'),
+  impress: path.join(__dirname, '..', 'build-assets', 'icons', 'impress.png'),
 };
 
 const source = ICONS_BY_CLIENT[clientName];
