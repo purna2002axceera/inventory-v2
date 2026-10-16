@@ -75,6 +75,10 @@ export function SoFormDialog({
   onSaved: () => void;
 }) {
   const [confirmValues, setConfirmValues] = useState<SoFormValues | null>(null);
+  // item_id -> custom price for whichever customer is currently selected. Mirrors what the
+  // backend will actually resolve at creation time (customer_item_prices, falling back to the
+  // item's own price), so the on-screen total isn't a surprise once the order is submitted.
+  const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
 
   // Async search for customers
   const customerSearch = useAsyncSearch<Customer>({
@@ -125,9 +129,27 @@ export function SoFormDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomerId]);
 
+  useEffect(() => {
+    if (!selectedCustomerId) {
+      setCustomerPrices({});
+      return;
+    }
+    callIpc(window.electronAPI.customers.getItemPrices(Number(selectedCustomerId))).then((data) => {
+      const overrides: Record<number, number> = {};
+      for (const i of data.items) {
+        if (i.custom_price != null) overrides[i.item_id] = i.custom_price;
+      }
+      setCustomerPrices(overrides);
+    });
+  }, [selectedCustomerId]);
+
+  function effectivePrice(item: Item) {
+    return customerPrices[item.item_id] ?? item.unit_price;
+  }
+
   const grandTotal = watchedLines.reduce((sum, l) => {
     const item = l.itemId ? itemSearch.getById(l.itemId) : undefined;
-    return sum + (item ? item.unit_price * (Number(l.quantity) || 0) : 0);
+    return sum + (item ? effectivePrice(item) * (Number(l.quantity) || 0) : 0);
   }, 0);
   const availableCredit = selectedCustomer ? selectedCustomer.credit_limit - selectedCustomer.credit_used : 0;
   const exceedsCredit = paymentType === 'CREDIT' && selectedCustomer ? grandTotal > availableCredit + 0.005 : false;
@@ -368,7 +390,12 @@ export function SoFormDialog({
                     {selectedItem && (
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
                         <span>Total available: {selectedItem.stock_count}</span>
-                        <span className="font-medium text-foreground">Selling price: Rs. {selectedItem.unit_price.toFixed(2)}</span>
+                        <span className="font-medium text-foreground">
+                          Selling price: Rs. {effectivePrice(selectedItem).toFixed(2)}
+                        </span>
+                        {customerPrices[selectedItem.item_id] != null && (
+                          <span className="text-amber-600">(custom price for this customer)</span>
+                        )}
                       </div>
                     )}
                   </div>

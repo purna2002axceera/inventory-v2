@@ -10,13 +10,15 @@ export function CustomersTable({
   onEdit,
   onDelete,
   onViewCreditHistory,
+  onManagePricing,
 }: {
   data: Customer[];
   onEdit: (c: Customer) => void;
   onDelete: (c: Customer) => void;
   onViewCreditHistory: (c: Customer) => void;
+  onManagePricing: (c: Customer) => void;
 }) {
-  const columns = getCustomerColumns(onEdit, onDelete, onViewCreditHistory);
+  const columns = getCustomerColumns(onEdit, onDelete, onViewCreditHistory, onManagePricing);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
 
   return (

@@ -180,6 +180,21 @@ export interface CreditHistoryResult {
   orders: CreditHistoryOrder[];
 }
 
+export interface CustomerItemPrice {
+  item_id: number;
+  sku: string;
+  name: string;
+  bike_model: string;
+  stock_count: number;
+  default_price: number;
+  custom_price: number | null;
+}
+
+export interface CustomerItemPricesResult {
+  customerName: string;
+  items: CustomerItemPrice[];
+}
+
 export interface SalesOrdersListResult {
   orders: SalesOrder[];
   total: number;

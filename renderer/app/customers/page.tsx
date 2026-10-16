@@ -12,6 +12,7 @@ import { AppShell } from '@/components/app-shell';
 import { CustomersTable } from '@/components/customers/customers-table';
 import { CustomerFormDialog } from '@/components/customers/customer-form-dialog';
 import { CreditHistoryDialog } from '@/components/customers/credit-history-dialog';
+import { CustomerPricingDialog } from '@/components/customers/customer-pricing-dialog';
 import { useDebounce } from '@/hooks/use-debounce';
 import { callIpc, IpcError } from '@/lib/ipc-client';
 import { config } from '@/lib/config';
@@ -40,6 +41,7 @@ function CustomersPageContent() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
   const [historyCustomerId, setHistoryCustomerId] = useState<number | null>(null);
+  const [pricingCustomerId, setPricingCustomerId] = useState<number | null>(null);
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -162,6 +164,7 @@ function CustomersPageContent() {
         onEdit={openEditDialog}
         onDelete={(customer) => setDeleteTarget(customer)}
         onViewCreditHistory={(customer) => setHistoryCustomerId(customer.customer_id)}
+        onManagePricing={(customer) => setPricingCustomerId(customer.customer_id)}
       />
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -186,6 +189,7 @@ function CustomersPageContent() {
 
       <CustomerFormDialog open={formOpen} onOpenChange={setFormOpen} editingCustomer={editingCustomer} onSaved={loadCustomers} />
       <CreditHistoryDialog customerId={historyCustomerId} onOpenChange={(open) => !open && setHistoryCustomerId(null)} />
+      <CustomerPricingDialog customerId={pricingCustomerId} onOpenChange={(open) => !open && setPricingCustomerId(null)} />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

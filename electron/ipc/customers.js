@@ -1,5 +1,6 @@
 const { ValidationError, NotFoundError } = require('../errors');
 const { wrapHandler } = require('./wrap');
+const { runTransaction } = require('../db/connection');
 const { getCustomerCreditUsed, getCustomerWrittenOffTotal, getSoOutstanding, getSoRefundDue } = require('../db/creditHelpers');
 
 function registerCustomersHandlers(ipcMain, getDb) {
@@ -132,6 +133,57 @@ function registerCustomersHandlers(ipcMain, getDb) {
         totalWrittenOff: getCustomerWrittenOffTotal(db, customerId),
         orders,
       };
+    })
+  );
+
+  // List every active item alongside this customer's price overrides, if any — the basis for
+  // the "Manage Pricing" screen (default price shown until the customer has a custom one).
+  ipcMain.handle(
+    'customers:getItemPrices',
+    wrapHandler(({ customerId }) => {
+      const db = getDb();
+      const customer = db.prepare('SELECT * FROM customers WHERE customer_id = ?').get(customerId);
+      if (!customer) throw new NotFoundError('Customer not found.');
+
+      const items = db
+        .prepare(
+          `SELECT i.item_id, i.sku, i.name, i.bike_model, i.stock_count, i.unit_price AS default_price,
+                  cip.unit_price AS custom_price
+           FROM items i
+           LEFT JOIN customer_item_prices cip ON cip.item_id = i.item_id AND cip.customer_id = ?
+           WHERE i.is_active = 1
+           ORDER BY i.name ASC`
+        )
+        .all(customerId);
+
+      return { customerName: customer.name, items };
+    })
+  );
+
+  // Set (or, with unitPrice null, clear) this customer's override price for one item.
+  ipcMain.handle(
+    'customers:setItemPrice',
+    wrapHandler(({ customerId, itemId, unitPrice }) => {
+      const db = getDb();
+      const customer = db.prepare('SELECT * FROM customers WHERE customer_id = ?').get(customerId);
+      if (!customer) throw new NotFoundError('Customer not found.');
+      const item = db.prepare('SELECT * FROM items WHERE item_id = ? AND is_active = 1').get(itemId);
+      if (!item) throw new NotFoundError('Item not found or is archived.');
+
+      if (unitPrice != null && Number(unitPrice) < 0) {
+        throw new ValidationError('Custom price cannot be negative.');
+      }
+
+      runTransaction(db, () => {
+        db.prepare('DELETE FROM customer_item_prices WHERE customer_id = ? AND item_id = ?').run(customerId, itemId);
+        if (unitPrice != null) {
+          db.prepare(
+            'INSERT INTO customer_item_prices (customer_id, item_id, unit_price) VALUES (?, ?, ?)'
+          ).run(customerId, itemId, Number(unitPrice));
+        }
+      });
+
+      return { customerId, itemId, unitPrice: unitPrice != null ? Number(unitPrice) : null };
     })
   );
 

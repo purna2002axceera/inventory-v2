@@ -1,5 +1,5 @@
 import type { IpcResult } from '@/lib/ipc-client';
-import type { Item, ItemTypeRecord, ItemsListResult, ProductionListResult, Customer, CustomersListResult, SalesOrder, SalesOrdersListResult, Batch, BatchesListResult, SalesReportResult, DetailedSalesReportResult, ReturnNotesListResult, ReturnableItemsResult, ReturnNoteDetail, StocksReportResult, GRNsReportResult, ReturnsReportResult, StockAdjustmentsListResult, CreditHistoryResult, CreditPayment } from '@/lib/types';
+import type { Item, ItemTypeRecord, ItemsListResult, ProductionListResult, Customer, CustomersListResult, SalesOrder, SalesOrdersListResult, Batch, BatchesListResult, SalesReportResult, DetailedSalesReportResult, ReturnNotesListResult, ReturnableItemsResult, ReturnNoteDetail, StocksReportResult, GRNsReportResult, ReturnsReportResult, StockAdjustmentsListResult, CreditHistoryResult, CreditPayment, CustomerItemPricesResult } from '@/lib/types';
 
 export interface ReceiptPdfData {
   soNumber: string;
@@ -136,6 +136,8 @@ declare global {
         update: (customer: { customerId: number; name?: string; address?: string; phone?: string; district?: string | null; creditEnabled?: boolean; creditLimit?: number }) => Promise<IpcResult<Customer>>;
         delete: (customerId: number) => Promise<IpcResult<{ success: boolean }>>;
         getCreditHistory: (customerId: number) => Promise<IpcResult<CreditHistoryResult>>;
+        getItemPrices: (customerId: number) => Promise<IpcResult<CustomerItemPricesResult>>;
+        setItemPrice: (payload: { customerId: number; itemId: number; unitPrice: number | null }) => Promise<IpcResult<{ customerId: number; itemId: number; unitPrice: number | null }>>;
       };
       salesOrders: {
         create: (payload: {

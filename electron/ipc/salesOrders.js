@@ -111,11 +111,17 @@ function registerSalesOrdersHandlers(ipcMain, getDb) {
           ? resolveManualBatch(db, line.itemId, line.batchId, line.quantity)
           : resolveFifo(db, line.itemId, line.quantity);
 
+        // A per-customer price override, if one's been set (Customers -> Manage Pricing),
+        // beats the item's normal price. Falls straight through to the item's price otherwise.
+        const override = db
+          .prepare('SELECT unit_price FROM customer_item_prices WHERE customer_id = ? AND item_id = ?')
+          .get(customerId, line.itemId);
+
         return {
           itemId: line.itemId,
           quantity: line.quantity,
           unitCost: item.unit_cost,
-          unitPrice: item.unit_price,
+          unitPrice: override ? override.unit_price : item.unit_price,
           draws
         };
       });

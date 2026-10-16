@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (customer) => ipcRenderer.invoke('customers:update', customer),
     delete: (customerId) => ipcRenderer.invoke('customers:delete', { customerId }),
     getCreditHistory: (customerId) => ipcRenderer.invoke('customers:getCreditHistory', { customerId }),
+    getItemPrices: (customerId) => ipcRenderer.invoke('customers:getItemPrices', { customerId }),
+    setItemPrice: (payload) => ipcRenderer.invoke('customers:setItemPrice', payload),
   },
   salesOrders: {
     create: (payload) => ipcRenderer.invoke('salesOrders:create', payload),

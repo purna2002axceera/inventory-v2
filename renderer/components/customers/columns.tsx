@@ -10,7 +10,8 @@ import type { Customer } from '@/lib/types';
 export function getCustomerColumns(
   onEdit: (c: Customer) => void,
   onDelete: (c: Customer) => void,
-  onViewCreditHistory: (c: Customer) => void
+  onViewCreditHistory: (c: Customer) => void,
+  onManagePricing: (c: Customer) => void
 ): ColumnDef<Customer>[] {
   const columns: ColumnDef<Customer>[] = [
     { accessorKey: 'name', header: 'Name' },
@@ -94,6 +95,7 @@ export function getCustomerColumns(
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onEdit(row.original)}>Edit</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onManagePricing(row.original)}>Manage Pricing</DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => onDelete(row.original)}
                 disabled={!canDelete}
